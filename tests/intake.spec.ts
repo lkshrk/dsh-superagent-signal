@@ -102,7 +102,7 @@ describe('intake', () => {
     const trigger = ctx.received[0]!
     expect(trigger.threads[0]!.id).toBe(`${internalA}:800`)
     expect(trigger.channel!.thread).toBe(`signal:${internalA}:800`)
-    expect(trigger.text).toBe('Fix the flaky test')
+    expect(trigger.text).toBe('Fix the flaky test\n\n> quoted: Working on it')
     expect(trigger.meta.quote).toBe(900)
     expect(lookup(ctx, 1200, NOW)).toEqual({ thread: `${internalA}:800`, ticketId: 't-1', at: NOW.toISOString() })
   })

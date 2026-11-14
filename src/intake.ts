@@ -18,7 +18,7 @@ export const consoleLog: IntakeLog = { info: line => console.info(`${PREFIX} ${l
 export function triggerOf(message: HubMessage, actor: string, thread: string, group: string, maxBytes: number): Trigger {
   const { timestamp, quote, attachments, sender } = message
   let text = message.kind === 'edit' ? `(edited) ${message.text}` : message.text
-  if (quote && message.kind !== 'edit' && thread === threadId(group, timestamp)) text += `\n\n> quoted: ${quote.text}`
+  if (quote?.text && message.kind !== 'edit') text += `\n\n> quoted: ${quote.text}`
   if (attachments.length) text = [text, ...attachments.map(a => attachmentLine(a, maxBytes))].filter(part => part !== '').join('\n')
   return {
     id: triggerId(actor, timestamp),

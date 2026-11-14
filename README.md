@@ -95,8 +95,10 @@ Only people in the Policy's `allowed` list originate work. Each `id` is a Signal
 | A message that quotes nothing | A new thread, `<group>:<timestamp>` | `signal:<sender>:<timestamp>` |
 | A quote of your own earlier message, or of dsh's reply to it | That message's thread | as above |
 | A quote of a notice about a ticket that did not start in Signal | The ticket's thread, `<group>:ticket:<ticket id>`, which the Source attaches to the ticket | as above |
-| A quote of anything older than 14 days, of a health notice, or of a message the Source never saw | A new thread; the Trigger text ends with `> quoted: <quoted text>` | as above |
+| A quote of anything older than 14 days, of a health notice, or of a message the Source never saw | A new thread | as above |
 | An edit | The edited message's thread; the text starts with `(edited)` | as above, with the edit's timestamp |
+
+A Trigger for a quote, except an edit, ends with `> quoted: <quoted text>`, so the worker sees which message it answers.
 
 The Source remembers which thread each message belongs to for 14 days (the map horizon), counted from when the hub received it. Reactions, poll votes, edits of unknown messages and messages from other groups are ignored.
 

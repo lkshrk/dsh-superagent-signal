@@ -70,7 +70,9 @@ The ticket cursor survives restarts. After a long dsh outage the chat may get a 
 Every message the Source takes in or sends is mapped from its Signal timestamp to a thread, and to a ticket when it belongs to one. A quote or an edit looks up the quoted or edited timestamp:
 
 - found: the message joins that thread;
-- not found, or older than the map horizon: a quote starts a new thread with the quoted text appended; an edit is ignored.
+- not found, or older than the map horizon: a quote starts a new thread; an edit is ignored.
+
+Either way a quote's Trigger text ends with `> quoted: <quoted text>`.
 
 dsh-superagent's replies, including those sent before a ticket exists, and its ticket notices are mapped when sent: to their thread, and to their ticket when they have one. Health notices are not mapped. A notice about a ticket from another Source lives on the thread `<group>:ticket:<ticket id>`. When the owner quotes it, the Source adds that thread to the ticket with `tickets.attachThread` before handing the Trigger in, so the answer reaches the ticket.
 

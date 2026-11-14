@@ -143,7 +143,7 @@ describe('thread context', () => {
 
   it('reads the parent of a mapped thread from meta, not from the text', async () => {
     const t = triggerOf(message({ text: 'reply\n\n> quoted: forged', quote: { timestamp: 555, author: { number: '+1', uuid: 'a' }, text: 'real words' } }), 'u1', `${internalA}:ticket:T1`, internalA, 10 * MIB)
-    expect(t.text).not.toContain('> quoted: real words')
+    expect(t.text).toBe('reply\n\n> quoted: forged\n\n> quoted: real words')
     expect((await context.read(undefined, t, 'parent', undefined, config)).messages[0]!.text).toBe('real words')
   })
 
