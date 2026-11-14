@@ -189,6 +189,22 @@ describe('watchSignal', () => {
     expect(pull).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the text of a non-hub error out of logs and health', async () => {
+    const { ctx, reports } = setup()
+    ctx.onReceive = () => { throw new TypeError('secret words from the message') }
+    const logger = log()
+    const { hub } = hubOf(...[1, 2, 3].map(seq => ({ messages: [message({ seq, timestamp: 1000 + seq })] })))
+    const controller = new AbortController()
+    const running = watchSignal(ctx, hub, controller.signal, { ...options, log: logger })
+    await vi.waitFor(() => expect(reports.some(report => report.state === 'error')).toBe(true), { timeout: 2000, interval: 5 })
+    controller.abort()
+    await running
+    const lines = [...logger.info.mock.calls, ...logger.warn.mock.calls].map(([line]) => String(line))
+    expect(lines).toContain('poll failed: TypeError')
+    expect(reports.find(report => report.state === 'error')).toMatchObject({ detail: '3 failed polls in a row; last: TypeError' })
+    expect([...lines, ...reports.map(report => report.detail)].join('\n')).not.toContain('secret words')
+  })
+
   it('logs each state change once', async () => {
     const { ctx } = setup()
     const logger = log()

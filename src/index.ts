@@ -3,7 +3,7 @@ import { HEALTH, SOURCE, SignalConfigSchema, type SignalConfig } from './config.
 import { HubClient } from './hub.ts'
 import { signalKind } from './kind.ts'
 import type { SourceContext, SourceHost } from './types.ts'
-import { watchSignal } from './watch.ts'
+import { errorDetail, watchSignal } from './watch.ts'
 
 interface PluginContext {
   orchestrator: SourceHost
@@ -31,7 +31,7 @@ export function apply(ctx: PluginContext): void {
     const controller = new AbortController()
     // DSH ends its process on an unhandled rejection, so a failure that escapes the loops becomes the Source's health.
     const running = watchSignal(context, hub, controller.signal)
-      .catch((error: unknown) => { context.report(HEALTH, { state: 'error', detail: String(error) }) })
+      .catch((error: unknown) => { context.report(HEALTH, { state: 'error', detail: errorDetail(error) }) })
     return async () => { controller.abort(); await running; source = undefined }
   })
 }

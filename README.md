@@ -149,7 +149,7 @@ The counts are per process. Each change of state is logged once, as `dsh-superag
 - **`Set the hub URL, token file and group id`.** Set all three. Check that `groupId` is the internal id (base64 of 32 bytes) or `group.<base64>` of it.
 - **`This dsh-superagent version lacks …`.** Upgrade dsh-superagent to 0.3.0 or later.
 - **`The hub refused the token (401)`.** The file at `tokenFile` does not hold the hub's `tokenDir/dsh` token. Mount the same value; the Source rereads the file on every request and retries every 5 seconds.
-- **`<n> failed polls in a row; last: …`.** The hub is unreachable or failing. `the token file cannot be read` or `the token file holds fewer than 32 characters` point at `tokenFile`; a status in parentheses comes from the hub (see [Signal hub](docs/signal-hub.md)). The Source retries every 5 seconds.
+- **`<n> failed polls in a row; last: …`.** The hub is unreachable or failing. `the token file cannot be read` or `the token file holds fewer than 32 characters` point at `tokenFile`; a status in parentheses comes from the hub (see [Signal hub](docs/signal-hub.md)). Any other error shows only its name, such as `TypeError`, since its message may quote what was written. The Source retries every 5 seconds.
 - **`… older than the hub's replay limit were skipped`.** dsh was away longer than the hub consumer's `maxReplayAge`. Set it to `14d`.
 - **`… the hub's log was reset at …`.** The hub's database was wiped. The Source read on from its oldest message.
 - **A quote went to the orchestrator as a new request.** The quoted message is older than 14 days, or it is a health notice. Write a new message, or quote a newer one.

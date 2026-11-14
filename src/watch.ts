@@ -39,9 +39,11 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   })
 }
 
-const describe = (error: unknown) => error instanceof HubError && error.status > 0
-  ? `${error.message} (${error.status})`
-  : error instanceof Error ? error.message : String(error)
+// Only hub errors are known to carry no message text; anything else is named, not quoted.
+export function errorDetail(error: unknown): string {
+  if (error instanceof HubError) return error.status > 0 ? `${error.message} (${error.status})` : error.message
+  return error instanceof Error ? error.name : typeof error
+}
 
 export async function watchSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull'>, signal: AbortSignal, options: WatchOptions = {}): Promise<void> {
   const now = options.now ?? (() => new Date())
@@ -93,7 +95,7 @@ export async function watchSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull
       } catch (error) {
         if (signal.aborted) return
         failures++
-        const detail = describe(error)
+        const detail = errorDetail(error)
         if (failures === 1) log.warn(`poll failed: ${detail}`)
         const unauthorized = error instanceof HubError && error.status === 401
         if (unauthorized) report({ state: 'error', detail: 'The hub refused the token (401)' })

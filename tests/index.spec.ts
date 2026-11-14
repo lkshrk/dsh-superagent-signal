@@ -38,6 +38,19 @@ describe('apply', () => {
     return { kind: kind!, hub }
   }
 
+  it('reports an escaped non-hub error by its name only', async () => {
+    const ready = Promise.reject(new RangeError('secret words from the message'))
+    ready.catch(() => {})
+    const ctx = Object.assign(fakeContext(), { ready })
+    const reports: { state: string; detail: string }[] = []
+    ctx.report = (_entry, health) => { reports.push(health) }
+    apply({
+      orchestrator: { sources: { register: () => () => {} }, context: () => ctx },
+      effect: execute => { const dispose = execute(); if (dispose) disposers.push(dispose) },
+    })
+    await vi.waitFor(() => expect(reports).toEqual([{ state: 'error', detail: 'RangeError' }]), { timeout: 1000, interval: 5 })
+  })
+
   it('sends a Channel message through the hub', async () => {
     const { kind, hub } = await wired()
     hub.respond({ json: { timestamp: 5000, timestamps: [5000] } })
