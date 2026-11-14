@@ -134,7 +134,7 @@ The Source reports one health entry, `signal`.
 | `paused` | `Set the hub URL, token file and group id` | One of the three is empty, or `groupId` is not a valid group id. |
 | `error` | `This dsh-superagent version lacks <members>; the Signal Source needs dsh-superagent 0.3.0 or later` | dsh-superagent lacks `admits`, `health`, `tickets.changed` or `tickets.attachThread`. Nothing is pulled. |
 | `error` | `The hub refused the token (401)` | At once when the hub answers 401. |
-| `error` | `<n> failed polls in a row; last: <error>` | From the third failed pull in a row. |
+| `error` | `<n> failed polls in a row; last: <error>` | From the third failed pull in a row, or at the first one after a 401. |
 | `ready` | `<taken> taken in, <refused> from people not on the list, <ignored> ignored, <posted> notices` | After each successful pull. Adds `; <n> older than the hub's replay limit were skipped` and `; the hub's log was reset at <time>` when they happened. |
 
 The counts are per process. Each change of state is logged once, as `dsh-superagent-signal: <state>: <detail>`.

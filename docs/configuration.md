@@ -42,7 +42,7 @@ The one group the Source serves. Stored as given and compared as the internal id
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `pollWaitSeconds` | integer, 0–60 | `30` | The hub's long-poll `wait`. Intake runs back to back, so `0` pulls continuously. |
+| `pollWaitSeconds` | integer, 0–60 | `30` | The hub's long-poll `wait`. Intake runs back to back; with `0` it waits 1 second after an empty page. |
 | `pollLimit` | integer, 1–500 | `100` | Messages per pull. |
 | `notifyTickets` | boolean | `true` | Notices when a ticket asks a question, is blocked, failed or ended. |
 | `notifyHealth` | boolean | `true` | Notices when another Source or sync entry fails or recovers. |

@@ -5,8 +5,9 @@ import { NOTICE_INTERVAL_MS, type NoticeCounts, noticeRound } from './notices.ts
 import type { Health, SourceContext } from './types.ts'
 
 export const RETRY_MS = 5000
+export const EMPTY_POLL_PAUSE_MS = 1000
 
-export interface WatchOptions { now?: () => Date; log?: IntakeLog; retryMs?: number; noticeMs?: number }
+export interface WatchOptions { now?: () => Date; log?: IntakeLog; retryMs?: number; noticeMs?: number; emptyPauseMs?: number }
 
 type Settings = { ok: true; config: SignalConfig } | { ok: false; health: Health }
 
@@ -47,6 +48,7 @@ export async function watchSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull
   const log = options.log ?? consoleLog
   const retryMs = options.retryMs ?? RETRY_MS
   const noticeMs = options.noticeMs ?? NOTICE_INTERVAL_MS
+  const emptyPauseMs = options.emptyPauseMs ?? EMPTY_POLL_PAUSE_MS
   let last = ''
   const report = (health: Health, same = `${health.state}: ${health.detail}`) => {
     ctx.report(HEALTH, { ...health, at: now().toISOString() })
@@ -66,16 +68,23 @@ export async function watchSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull
 
   const intake = async () => {
     let failures = 0
+    let refused = false
     while (!signal.aborted) {
-      const settings = settingsOf(ctx)
-      if (!settings.ok) {
-        report(settings.health)
-        await sleep(retryMs, signal)
-        continue
-      }
+      let pause = 0
       try {
+        const settings = settingsOf(ctx)
+        if (!settings.ok) {
+          failures = 0
+          refused = false
+          report(settings.health)
+          await sleep(retryMs, signal)
+          continue
+        }
+        const before = counts.taken + counts.refused + counts.ignored
         await pollSignal(ctx, hub, settings.config, signal, counts, { now, log })
         failures = 0
+        refused = false
+        if (settings.config.pollWaitSeconds === 0 && counts.taken + counts.refused + counts.ignored === before) pause = emptyPauseMs
         const missed = counts.missed ? `; ${counts.missed} older than the hub's replay limit were skipped` : ''
         const reset = counts.reset ? `; the hub's log was reset at ${counts.reset}` : ''
         report({ state: 'ready',
@@ -86,23 +95,25 @@ export async function watchSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull
         failures++
         const detail = describe(error)
         if (failures === 1) log.warn(`poll failed: ${detail}`)
-        if (error instanceof HubError && error.status === 401) report({ state: 'error', detail: 'The hub refused the token (401)' })
-        else if (failures >= 3) report({ state: 'error', detail: `${failures} failed polls in a row; last: ${detail}` }, `error: polls: ${detail}`)
-        await sleep(retryMs, signal)
+        const unauthorized = error instanceof HubError && error.status === 401
+        if (unauthorized) report({ state: 'error', detail: 'The hub refused the token (401)' })
+        // Replace a stale 401 detail at once instead of waiting for the third failure.
+        else if (failures >= 3 || refused) report({ state: 'error', detail: `${failures} failed polls in a row; last: ${detail}` }, `error: polls: ${detail}`)
+        refused = unauthorized
+        pause = retryMs
       }
+      if (pause) await sleep(pause, signal)
     }
   }
 
   const notify = async () => {
     while (!signal.aborted) {
-      const settings = settingsOf(ctx)
-      if (settings.ok) {
-        try {
-          noticeRound(ctx, settings.config, now(), notices)
-        } catch (error) {
-          // Only the error's name: host errors may quote ticket or message text.
-          log.warn(`notice round failed: ${error instanceof Error ? error.name : typeof error}`)
-        }
+      try {
+        const settings = settingsOf(ctx)
+        if (settings.ok) noticeRound(ctx, settings.config, now(), notices)
+      } catch (error) {
+        // Only the error's name: host errors may quote ticket or message text.
+        log.warn(`notice round failed: ${error instanceof Error ? error.name : typeof error}`)
       }
       await sleep(noticeMs, signal)
     }

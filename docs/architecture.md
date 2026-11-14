@@ -46,7 +46,7 @@ flowchart LR
 
 `watchSignal` waits for dsh-superagent to be ready. When the deployment is not configured, it reports `paused` and exits. When dsh-superagent lacks `admits`, `health`, `tickets.changed` or `tickets.attachThread`, it reports `error` naming them and exits without pulling. Otherwise it runs both loops until aborted.
 
-**Intake** repeats back to back; the hub's long poll (`pollWaitSeconds`) paces it:
+**Intake** repeats back to back; the hub's long poll (`pollWaitSeconds`) paces it, and with `pollWaitSeconds: 0` an empty page is followed by a 1 second wait:
 
 1. Read the current config. Report `paused` when the Source is off, or `hubUrl`, `tokenFile` or `groupId` is empty or invalid, and check again after 5 seconds.
 2. Pull once after the stored cursor (`pollSignal`). With no cursor yet, the hub starts at its head: older messages are not work for the Source.
@@ -54,7 +54,7 @@ flowchart LR
 4. Store the page's `next`, unless it would move the cursor back without a `reset`.
 5. Report `ready` with the counts.
 
-A failed pull waits 5 seconds. A 401 makes health `error` at once; any other failure from the third in a row.
+A failed pull, including a config read that throws, waits 5 seconds. A 401 makes health `error` at once; any other failure from the third in a row, or at once when it follows a 401. A pause resets the count.
 
 **Notices** run every 5 seconds while the config is complete (`noticeRound`):
 

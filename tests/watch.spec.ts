@@ -143,4 +143,64 @@ describe('watchSignal', () => {
     await running
     expect(Date.now() - started).toBeLessThan(1000)
   })
+
+  it('counts failures from zero after a pause', async () => {
+    let current: Record<string, unknown> = settings
+    const { ctx, reports } = setup()
+    ctx.config = (() => current) as typeof ctx.config
+    const bad = () => new HubError('bad gateway', 502)
+    const { hub, pull } = hubOf(bad(), bad())
+    pull.mockImplementationOnce(async () => { throw bad() })
+      .mockImplementationOnce(async () => { current = { ...settings, tokenFile: '' }; throw bad() })
+    ctx.report = (_entry, health) => {
+      reports.push(health)
+      if (health.state === 'paused') current = settings
+    }
+    await watchUntil(ctx, hub, () => pull.mock.calls.length >= 5)
+    expect(reports.map(report => report.state)).toContain('paused')
+    expect(reports.filter(report => report.state === 'error')).toEqual([])
+  })
+
+  it('replaces a refused token detail at the next other failure', async () => {
+    const { ctx, reports } = setup()
+    const { hub } = hubOf(new HubError('unauthorized', 401), new HubError('bad gateway', 502))
+    await watchUntil(ctx, hub, () => reports.filter(report => report.state === 'error').length >= 2)
+    expect(reports.filter(report => report.state === 'error').map(report => report.detail))
+      .toEqual(['The hub refused the token (401)', '2 failed polls in a row; last: bad gateway (502)'])
+  })
+
+  it('treats a throwing config read as a failed round', async () => {
+    const { ctx, reports } = setup()
+    let throws = 2
+    ctx.config = (() => { if (throws-- > 0) throw new Error('config unavailable'); return settings }) as typeof ctx.config
+    const { hub } = hubOf({ messages: [] })
+    await watchUntil(ctx, hub, () => reports.some(report => report.state === 'ready'))
+    expect(reports.at(-1)).toMatchObject({ state: 'ready' })
+  })
+
+  it('waits after an empty page when the poll does not wait', async () => {
+    const { ctx } = setup({ ...settings, pollWaitSeconds: 0 })
+    const pull = vi.fn(async (): Promise<Pull> => ({ messages: [], next: 0, missed: 0, reset: false }))
+    const controller = new AbortController()
+    const running = watchSignal(ctx, { pull } as unknown as HubClient, controller.signal, { ...options, emptyPauseMs: 10_000 })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    controller.abort()
+    await running
+    expect(pull).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs each state change once', async () => {
+    const { ctx } = setup()
+    const logger = log()
+    const bad = () => new HubError('bad gateway', 502)
+    const { hub, pull } = hubOf({}, {}, {}, bad(), bad(), bad(), bad())
+    const controller = new AbortController()
+    const running = watchSignal(ctx, hub, controller.signal, { ...options, log: logger })
+    await vi.waitFor(() => expect(pull).toHaveBeenCalledTimes(8), { timeout: 2000, interval: 5 })
+    controller.abort()
+    await running
+    const lines = logger.info.mock.calls.map(([line]) => String(line))
+    expect(lines.filter(line => line.startsWith('ready: '))).toEqual(['ready: 0 taken in, 0 from people not on the list, 0 ignored, 0 notices'])
+    expect(lines.filter(line => line.startsWith('error: '))).toEqual(['error: 3 failed polls in a row; last: bad gateway (502)'])
+  })
 })
