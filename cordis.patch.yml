@@ -1,0 +1,5 @@
+# dsh-superagent-signal bundle layer: the Signal Source plugin, off until a profile enables it and configures the hub.
+- insert:
+    - id: dsh-superagent-signal
+      name: dsh-superagent-signal
+      disabled: true
