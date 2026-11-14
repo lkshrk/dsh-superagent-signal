@@ -160,14 +160,30 @@ describe('ticket notices', () => {
     expect(s.sent[0]?.text).toBe('Signal request "Fix login" is blocked:\nNo access\n\nQuote this message to answer.')
   })
 
-  it('leaves questions and ends of a Signal ticket to the host', () => {
+  it('announces a question and the ends the host does not post on a Signal request', () => {
     const s = setup()
     started(s)
     s.put(ticket('T1', { attention: { id: 'a1', question: 'Which repo?' } }), question, signalTrigger('trigger-T1'))
     s.put(ticket('T2', { ended: { at: iso(4), by: 'executor', outcome: 'completed' } }), ended, signalTrigger('trigger-T2'))
     s.put(ticket('T3', { ended: { at: iso(4), by: 'human', outcome: 'stopped' } }), ended, signalTrigger('trigger-T3'))
+    s.put(ticket('T4', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: [{ thread: 'github:12', own: true }] }), ended, signalTrigger('trigger-T4'))
+    s.round(at(5))
+    expect(s.sent.map(m => m.id)).toEqual(['signal:notice:T1:attention:a1', `signal:notice:T2:ended:${iso(4)}`, `signal:notice:T3:ended:${iso(4)}`, `signal:notice:T4:ended:${iso(4)}`])
+    expect(s.sent.every(m => m.channel === signalChannel)).toBe(true)
+    expect(s.sent[0]?.text).toBe('Question on Signal request "Fix login":\nWhich repo?\n\nQuote this message to answer.')
+  })
+
+  it('leaves a merged or closed end of a closed own pull request on a Signal request to the host', () => {
+    const s = setup()
+    started(s)
+    const closedPull = (outcome: 'merged' | 'closed') => [{ thread: 'github:12', own: true, closed: { at: iso(3), outcome } }]
+    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: closedPull('merged') }), ended, signalTrigger('trigger-T1'))
+    s.put(ticket('T2', { ended: { at: iso(4), by: 'executor', outcome: 'closed' }, follows: closedPull('closed') }), ended, signalTrigger('trigger-T2'))
     s.round(at(5))
     expect(s.sent).toEqual([])
+    s.put(ticket('T3', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: closedPull('merged') }), ended)
+    s.round(at(6))
+    expect(s.sent.map(m => m.id)).toEqual([`signal:notice:T3:ended:${iso(4)}`])
   })
 
   it('reads every page of changes', () => {
@@ -234,6 +250,20 @@ describe('health notices', () => {
     expect(s.sent.map(m => m.text)).toEqual(['dsh: sync:lkshrk/example is failing: clone failed'])
   })
 
+  it('caps the detail at 300 characters', () => {
+    const s = setup()
+    s.health.github = { state: 'error', detail: 'x'.repeat(301) }
+    s.round(T0)
+    s.round(at(60))
+    expect(s.sent[0]?.text).toBe(`dsh: github is failing: ${'x'.repeat(299)}…`)
+    s.health.github = { state: 'ready', detail: '' }
+    s.round(at(61))
+    s.health.github = { state: 'error', detail: 'y'.repeat(300) }
+    s.round(at(62))
+    s.round(at(122))
+    expect(s.sent.at(-1)?.text).toBe(`dsh: github is failing: ${'y'.repeat(300)}`)
+  })
+
   it('stays quiet about an error that clears within the grace, its own entry, and starting or paused', () => {
     const s = setup()
     s.health.github = { state: 'error', detail: 'blip' }
@@ -256,9 +286,12 @@ describe('health notices', () => {
 
   it('ignores host-internal entries', () => {
     const s = setup()
-    expect(HOST_HEALTH_ENTRIES).toEqual(expect.arrayContaining(['reply', 'relay', 'assessment', 'notice', 'runtime', 'evals', 'models', 'worker', 'signal']))
+    expect(HOST_HEALTH_ENTRIES).toEqual(expect.arrayContaining(['reply', 'relay', 'assessment', 'notice', 'runtime', 'evals', 'models', 'worker', 'launch', 'delivery', 'archive', 'signal']))
     s.health.reply = { state: 'error', detail: 'x' }
     s.health.runtime = { state: 'error', detail: 'x' }
+    s.health.launch = { state: 'error', detail: 'x' }
+    s.health.delivery = { state: 'error', detail: 'x' }
+    s.health.archive = { state: 'error', detail: 'x' }
     s.round(T0)
     s.round(at(600))
     expect(s.sent).toEqual([])

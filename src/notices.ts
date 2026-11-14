@@ -4,7 +4,8 @@ import { KEYS, type NotifiedRecord } from './state.ts'
 import type { ChannelRef, SourceContext, Ticket, TicketChange, TicketCursor, Trigger } from './types.ts'
 
 export const NOTICE_INTERVAL_MS = 5000
-export const HOST_HEALTH_ENTRIES: readonly string[] = ['reply', 'relay', 'assessment', 'notice', 'runtime', 'evals', 'models', 'worker', HEALTH]
+export const HOST_HEALTH_ENTRIES: readonly string[] = ['reply', 'relay', 'assessment', 'notice', 'runtime', 'evals', 'models', 'worker', 'launch', 'delivery', 'archive', HEALTH]
+const DETAIL_MAX = 300
 const PAGE = 100
 const KEPT_KEYS = 20
 
@@ -91,8 +92,7 @@ function announce(ctx: SourceContext, change: TicketChange, group: string, count
   const { ticket } = change
   const trigger = ctx.triggers.get(ticket.origin.triggerId)
   const fromSignal = trigger?.source === SOURCE
-  // The host itself answers questions and ends on a Signal request's own channel.
-  if (fromSignal && (transition.kind === 'question' || transition.kind === 'ended')) return
+  if (fromSignal && transition.kind === 'ended' && hostPostsEnd(ticket)) return
   const record = ctx.state.get<NotifiedRecord>(KEYS.notified(ticket.id)) ?? { keys: [] }
   if (record.keys.includes(transition.key)) return
   const channel: ChannelRef = fromSignal && trigger.channel
@@ -104,6 +104,14 @@ function announce(ctx: SourceContext, change: TicketChange, group: string, count
   const ended = ticket.ended?.at ?? record.ended
   ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { keys: [...record.keys, transition.key].slice(-KEPT_KEYS), ...ended ? { ended } : {} })
 }
+
+// The host posts merged and closed ends of a closed own pull request on the request's channel itself.
+function hostPostsEnd(ticket: Ticket): boolean {
+  const outcome = ticket.ended?.outcome
+  return (outcome === 'merged' || outcome === 'closed') && (ticket.follows ?? []).some(follow => follow.own && follow.closed)
+}
+
+const capped = (detail: string) => detail.length > DETAIL_MAX ? `${detail.slice(0, DETAIL_MAX - 1)}…` : detail
 
 function pullOf(ctx: SourceContext, ticket: Ticket): string | undefined {
   const own = ticket.follows?.find(follow => follow.own)
@@ -124,7 +132,7 @@ function healthRound(ctx: SourceContext, entries: ReturnType<NonNullable<SourceC
         ctx.state.set(key, record)
       }
       if (!record.notified && now.getTime() - Date.parse(record.since) >= graceSeconds * 1000) {
-        post(`signal:health:${entry}:error:${record.since}`, `dsh: ${entry} is failing: ${health.detail}`)
+        post(`signal:health:${entry}:error:${record.since}`, `dsh: ${entry} is failing: ${capped(health.detail)}`)
         ctx.state.set<HealthRecord>(key, { ...record, notified: true })
       }
     } else if (health.state === 'ready' && record?.state === 'error') {
