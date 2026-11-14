@@ -186,6 +186,24 @@ describe('ticket notices', () => {
     expect(s.sent.map(m => m.id)).toEqual([`signal:notice:T3:ended:${iso(4)}`])
   })
 
+  it('leaves the end to the host when the only closed pull request is one the ticket only follows', () => {
+    const s = setup()
+    started(s)
+    const follows = [{ thread: 'github:o/r#7', own: false, closed: { at: iso(3), outcome: 'merged' as const } }]
+    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows }), ended, signalTrigger('trigger-T1'))
+    s.round(at(5))
+    expect(s.sent).toEqual([])
+  })
+
+  it('announces a Signal end whose closed follow is no pull request', () => {
+    const s = setup()
+    started(s)
+    const follows = [{ thread: 'github:ci:main', own: true, closed: { at: iso(3), outcome: 'closed' as const } }, { thread: 'linear:ENG-1', own: false, closed: { at: iso(3), outcome: 'closed' as const } }]
+    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'closed' }, follows }), ended, signalTrigger('trigger-T1'))
+    s.round(at(5))
+    expect(s.sent.map(m => m.id)).toEqual([`signal:notice:T1:ended:${iso(4)}`])
+  })
+
   it('reads every page of changes', () => {
     const s = setup()
     started(s)
@@ -262,6 +280,17 @@ describe('health notices', () => {
     s.round(at(62))
     s.round(at(122))
     expect(s.sent.at(-1)?.text).toBe(`dsh: github is failing: ${'y'.repeat(300)}`)
+  })
+
+  it('cuts the detail by code point, never inside an emoji', () => {
+    const s = setup()
+    s.health.github = { state: 'error', detail: `${'x'.repeat(298)}😀😀z` }
+    s.round(T0)
+    s.round(at(60))
+    const detail = s.sent[0]?.text.slice('dsh: github is failing: '.length) ?? ''
+    expect(detail).toBe(`${'x'.repeat(298)}😀…`)
+    expect([...detail]).toHaveLength(300)
+    expect(detail.isWellFormed()).toBe(true)
   })
 
   it('stays quiet about an error that clears within the grace, its own entry, and starting or paused', () => {

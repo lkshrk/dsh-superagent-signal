@@ -105,13 +105,27 @@ function announce(ctx: SourceContext, change: TicketChange, group: string, count
   ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { keys: [...record.keys, transition.key].slice(-KEPT_KEYS), ...ended ? { ended } : {} })
 }
 
-// The host posts merged and closed ends of a closed own pull request on the request's channel itself.
-function hostPostsEnd(ticket: Ticket): boolean {
-  const outcome = ticket.ended?.outcome
-  return (outcome === 'merged' || outcome === 'closed') && (ticket.follows ?? []).some(follow => follow.own && follow.closed)
+const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+
+function isPullThread(thread: string): boolean {
+  if (!thread.startsWith('github:')) return false
+  const id = thread.slice('github:'.length)
+  const at = id.indexOf('#')
+  const local = REPOSITORY.test(at > 0 ? id.slice(0, at) : '') ? id.slice(at + 1) : id
+  const number = Number(local)
+  return Number.isInteger(number) && number > 0
 }
 
-const capped = (detail: string) => detail.length > DETAIL_MAX ? `${detail.slice(0, DETAIL_MAX - 1)}…` : detail
+// Mirrors the host's pullEndNotices, which posts these ends on the request's channel itself.
+function hostPostsEnd(ticket: Ticket): boolean {
+  const outcome = ticket.ended?.outcome
+  return (outcome === 'merged' || outcome === 'closed') && (ticket.follows ?? []).some(follow => follow.closed && isPullThread(follow.thread))
+}
+
+function capped(detail: string): string {
+  const points = [...detail]
+  return points.length > DETAIL_MAX ? `${points.slice(0, DETAIL_MAX - 1).join('')}…` : detail
+}
 
 function pullOf(ctx: SourceContext, ticket: Ticket): string | undefined {
   const own = ticket.follows?.find(follow => follow.own)
