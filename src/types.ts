@@ -18,7 +18,7 @@ export interface Trigger {
   meta: Record<string, unknown>
 }
 export interface OutboundMessage { id: string; channel: ChannelRef; text: string; kind: 'acknowledgement' | 'reply' | 'notice'; ticketId?: string }
-export type ReceiveResult = string
+export type ReceiveResult = 'stored' | 'duplicate' | 'filtered'
 export type ScopeResult = { listened: true; observed: boolean; row?: string } | { listened: false; reason: string }
 export type Health = { state: 'starting' | 'ready' | 'paused' | 'error'; detail: string; at?: string }
 
@@ -40,7 +40,7 @@ export interface TicketCursor { at: string; id: string }
 export interface TicketChange { ticket: Ticket; stage: TicketStage }
 export interface Thread { meta: Record<string, unknown> }
 
-type FieldBase = { key: string; label: Localized; hint?: Localized; advanced?: boolean; optional?: boolean }
+type FieldBase = { key: string; label: Localized; hint?: Localized; advanced?: true; optional?: boolean }
 export type FieldSpec =
   | FieldBase & { type: 'switch' }
   | FieldBase & { type: 'number'; min: number; max: number }
@@ -58,8 +58,7 @@ export interface SourceContext {
   admits?(actor: { id: string; human: boolean }): boolean
   state: {
     get<V>(key: string): V | undefined
-    set<V>(key: string, value: V): void
-    delete(key: string): void
+    set<V>(key: string, value: V | undefined): void
     keys(prefix: string | { prefix: string }): string[]
   }
   threads: { get(id: string): Thread | undefined; describe(key: string, description: { label?: string; url?: string }): void }
