@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { z } from 'zod'
 
 export interface HubMessage {
   seq: number
@@ -24,6 +25,21 @@ export class HubError extends Error {
   }
 }
 
+const identity = z.object({ number: z.string(), uuid: z.string() }).loose()
+const MessageSchema = z.object({
+  seq: z.number().int(),
+  receivedAt: z.string(),
+  timestamp: z.number(),
+  kind: z.enum(['message', 'edit', 'reaction', 'poll_vote']),
+  sender: identity.extend({ name: z.string(), device: z.number() }),
+  group: z.object({ id: z.string(), internalId: z.string(), restId: z.string(), name: z.string() }).loose().nullable(),
+  text: z.string(),
+  quote: z.object({ timestamp: z.number(), author: identity, text: z.string() }).loose().nullable(),
+  attachments: z.array(z.object({ id: z.string(), contentType: z.string(), size: z.number(), filename: z.string(), caption: z.string() }).loose()),
+  editOf: z.number(),
+}).loose()
+const PullSchema = z.object({ messages: z.array(MessageSchema), next: z.number().int(), missed: z.number().int(), reset: z.boolean() })
+
 const MIN_TOKEN_LENGTH = 32
 const SEND_TIMEOUT_MS = 30_000
 const ATTACHMENT_TIMEOUT_MS = 60_000
@@ -40,8 +56,9 @@ export class HubClient {
     query.set('wait', String(wait))
     query.set('limit', String(limit))
     const response = await this.request(`/v1/messages?${query}`, { method: 'GET' }, (wait + 15) * 1000, signal)
-    const body = await readJson<Partial<Pull>>(response)
-    return { messages: body.messages ?? [], next: body.next ?? 0, missed: body.missed ?? 0, reset: body.reset ?? false }
+    const parsed = PullSchema.safeParse(await readJson<unknown>(response))
+    if (!parsed.success) throw new HubError('the hub answered with a malformed pull response', 502)
+    return parsed.data as Pull
   }
 
   async send(input: SendInput, signal?: AbortSignal): Promise<SendResult> {
@@ -108,7 +125,7 @@ export class HubClient {
     const timeout = AbortSignal.timeout(timeoutMs)
     let response: Response
     try {
-      response = await this.fetchImpl(`${url}${path}`, {
+      response = await this.fetchImpl(`${url.replace(/\/+$/, '')}${path}`, {
         ...init,
         headers: { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${token}` },
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -128,8 +145,8 @@ export class HubClient {
 async function readJson<T>(response: Response): Promise<T> {
   try {
     return await response.json() as T
-  } catch (error) {
-    throw transportError(error)
+  } catch {
+    throw new HubError('the hub answered with invalid JSON', response.status)
   }
 }
 

@@ -9,18 +9,21 @@ export interface FakeHub {
   url: string
   requests: RecordedRequest[]
   respond(...scripts: Script[]): void
+  requested(count: number): Promise<void>
   close(): Promise<void>
 }
 
 export async function fakeHub(): Promise<FakeHub> {
   const requests: RecordedRequest[] = []
   const queue: Script[] = []
+  const waiters: { count: number; resolve: () => void }[] = []
   const server = createServer((req, res) => {
     const parts: Buffer[] = []
     req.on('data', chunk => parts.push(chunk))
     req.on('end', () => {
       const recorded: RecordedRequest = { method: req.method ?? '', path: req.url ?? '', headers: req.headers, body: Buffer.concat(parts).toString('utf8') }
       requests.push(recorded)
+      for (const waiter of waiters) if (requests.length >= waiter.count) waiter.resolve()
       const script = queue.shift() ?? { status: 500, json: { error: 'no scripted response' } }
       const response = typeof script === 'function' ? script(recorded) : script
       if (response.hold) return
@@ -39,6 +42,7 @@ export async function fakeHub(): Promise<FakeHub> {
     url: `http://127.0.0.1:${port}`,
     requests,
     respond: (...scripts) => { queue.push(...scripts) },
+    requested: count => requests.length >= count ? Promise.resolve() : new Promise<void>(resolve => { waiters.push({ count, resolve }) }),
     close: () => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()) }),
   }
 }

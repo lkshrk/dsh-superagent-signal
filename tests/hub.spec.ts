@@ -62,9 +62,42 @@ describe('pull', () => {
     hub.respond({ hold: true })
     const controller = new AbortController()
     const pending = rejection(client.pull(1, 30, 100, controller.signal))
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await hub.requested(1)
     controller.abort()
     expect(await pending).toBeInstanceOf(Error)
+  })
+})
+
+describe('pull validation', () => {
+  const valid = {
+    seq: 1, receivedAt: '2026-11-14T10:00:00.123Z', timestamp: 1763114400000, kind: 'message',
+    sender: { number: '+49', uuid: 'u', name: 'Owner', device: 1 }, group: null, text: 'hi', quote: null, attachments: [], editOf: 0, mentions: [],
+  }
+
+  it('keeps extra keys on valid messages', async () => {
+    hub.respond({ json: { messages: [valid], next: 2, missed: 0, reset: false } })
+    const pulled = await client.pull(0, 0, 1, signal())
+    expect(pulled.messages[0]).toEqual(valid)
+  })
+
+  it('fails with 502 when a message entry is malformed', async () => {
+    const { sender: _sender, ...broken } = valid
+    hub.respond({ json: { messages: [valid, broken], next: 3, missed: 0, reset: false } })
+    const error = await rejection(client.pull(0, 0, 2, signal()))
+    expect(error).toBeInstanceOf(HubError)
+    expect(error).toMatchObject({ status: 502 })
+  })
+
+  it('fails with 502 when the cursor is missing', async () => {
+    hub.respond({ json: { messages: [] } })
+    expect(await rejection(client.pull(0, 0, 1, signal()))).toMatchObject({ status: 502 })
+  })
+
+  it('throws a HubError with the response status for an invalid JSON body', async () => {
+    hub.respond({ headers: { 'content-type': 'application/json' }, chunks: [new TextEncoder().encode('{nope')] })
+    const error = await rejection(client.pull(0, 0, 1, signal()))
+    expect(error).toBeInstanceOf(HubError)
+    expect(error).toMatchObject({ status: 200, message: 'the hub answered with invalid JSON' })
   })
 })
 
