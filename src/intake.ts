@@ -29,7 +29,7 @@ export function triggerOf(message: HubMessage, actor: string, thread: string, gr
     addressed: 'direct',
     at: message.receivedAt,
     text,
-    channel: { source: SOURCE, thread: `${SOURCE}:${thread}`, address: { group, quoteTimestamp: String(timestamp), quoteAuthor: actor } },
+    channel: { source: SOURCE, thread: `${SOURCE}:${thread}`, address: { group, quoteTimestamp: String(message.kind === 'edit' ? message.editOf : timestamp), quoteAuthor: actor } },
     meta: {
       group,
       timestamp,

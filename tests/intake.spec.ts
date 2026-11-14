@@ -146,6 +146,7 @@ describe('intake', () => {
     expect(edit.text).toBe('(edited) Fix the flaky test in CI')
     expect(edit.id).toBe(triggerId(OWNER_UUID, 1500))
     expect(edit.meta.kind).toBe('edit')
+    expect(edit.channel!.address.quoteTimestamp).toBe('1000')
     expect(lookup(ctx, 1500, NOW)?.thread).toBe(threadId(internalA, 1000))
   })
 
