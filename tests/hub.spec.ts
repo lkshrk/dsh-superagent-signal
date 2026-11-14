@@ -107,6 +107,27 @@ describe('pull validation', () => {
   })
 })
 
+describe('transport', () => {
+  it('reports an abort while the body streams as aborted, not as invalid JSON', async () => {
+    const streaming = (async (_url, init) => new Response(new ReadableStream({
+      start: stream => { init?.signal?.addEventListener('abort', () => stream.error(init.signal?.reason)) },
+    }), { status: 200 })) as typeof fetch
+    const aborting = new HubClient(() => ({ url: hub.url, tokenFile }), streaming)
+    const controller = new AbortController()
+    const pending = rejection(aborting.pull(1, 30, 100, controller.signal))
+    controller.abort()
+    const error = await pending
+    expect(error).toBeInstanceOf(HubError)
+    expect(error).toMatchObject({ status: 0, message: 'the hub request was aborted' })
+  })
+
+  it('joins a hubUrl with a trailing slash without doubling it', async () => {
+    hub.respond({ json: { messages: [], next: 1, missed: 0, reset: false } })
+    await new HubClient(() => ({ url: `${hub.url}/`, tokenFile })).pull(1, 0, 1, signal())
+    expect(hub.requests[0]?.path).toBe('/v1/messages?after=1&wait=0&limit=1')
+  })
+})
+
 describe('send', () => {
   it('sends a quote reply and returns the timestamps', async () => {
     hub.respond({ json: { timestamp: 5, timestamps: [5] } })

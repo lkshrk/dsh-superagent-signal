@@ -58,7 +58,7 @@ export class HubClient {
     const response = await this.request(`/v1/messages?${query}`, { method: 'GET' }, (wait + 15) * 1000, signal)
     const parsed = PullSchema.safeParse(await readJson<unknown>(response))
     if (!parsed.success) throw new HubError('the hub answered with a malformed pull response', 502)
-    return parsed.data as Pull
+    return parsed.data
   }
 
   async send(input: SendInput, signal?: AbortSignal): Promise<SendResult> {
@@ -145,8 +145,9 @@ export class HubClient {
 async function readJson<T>(response: Response): Promise<T> {
   try {
     return await response.json() as T
-  } catch {
-    throw new HubError('the hub answered with invalid JSON', response.status)
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new HubError('the hub answered with invalid JSON', response.status)
+    throw transportError(error)
   }
 }
 
