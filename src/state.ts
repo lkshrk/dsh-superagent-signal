@@ -3,16 +3,17 @@ import type { SourceContext } from './types.ts'
 export const MAP_HORIZON_MS = 14 * 24 * 3600_000
 export const PRUNE_INTERVAL_MS = 3600_000
 
+const PREFIX = { map: 'signal-map:', sent: 'signal-sent:', notified: 'signal-notified:' }
+
 export const KEYS = {
   cursor: 'signal-cursor',
-  map: (timestamp: number) => `signal-map:${timestamp}`,
-  sent: (messageId: string) => `signal-sent:${messageId}`,
-  notified: (ticketId: string) => `signal-notified:${ticketId}`,
+  map: (timestamp: number) => `${PREFIX.map}${timestamp}`,
+  sent: (messageId: string) => `${PREFIX.sent}${messageId}`,
+  notified: (ticketId: string) => `${PREFIX.notified}${ticketId}`,
   ticketCursor: 'signal-ticket-cursor',
   health: (entry: string) => `signal-health:${entry}`,
   pruned: 'signal-pruned',
 }
-const PREFIX = { map: 'signal-map:', sent: 'signal-sent:', notified: 'signal-notified:' }
 
 export interface MapEntry { thread: string; ticketId?: string; at: string }
 export interface SentRecord { timestamps: number[]; at: string }

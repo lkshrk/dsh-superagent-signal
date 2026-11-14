@@ -24,7 +24,7 @@ export function apply(ctx: PluginContext): void {
     const { hubUrl, tokenFile } = config()
     return { url: hubUrl, tokenFile }
   })
-  const kind = signalKind({ send: m => sendSignal(source!, hub, config(), m), context: () => source, hub: () => hub })
+  const kind = signalKind({ send: m => sendSignal(source!, hub, m), context: () => source, hub: () => hub })
   ctx.effect(() => orchestrator.sources.register(kind), 'signal: source kind')
   ctx.effect(() => {
     const context = source = orchestrator.context(kind)

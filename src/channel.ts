@@ -1,4 +1,4 @@
-import type { SignalConfig } from './config.ts'
+import { SOURCE } from './config.ts'
 import { HubError, type HubClient, type SendInput } from './hub.ts'
 import { consoleLog, type IntakeLog } from './intake.ts'
 import { KEYS, remember, type SentRecord } from './state.ts'
@@ -6,7 +6,7 @@ import type { OutboundMessage, SourceContext } from './types.ts'
 
 const NEVER_SUCCEEDS = new Set([400, 413])
 
-export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'>, _config: SignalConfig, message: OutboundMessage, log: IntakeLog = consoleLog): Promise<'sent' | 'gone'> {
+export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'>, message: OutboundMessage, log: IntakeLog = consoleLog): Promise<'sent' | 'gone'> {
   if (ctx.state.get<SentRecord>(KEYS.sent(message.id))) return 'sent'
   const { address, thread } = message.channel
   const input: SendInput = {
@@ -29,7 +29,7 @@ export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'
   const at = new Date().toISOString()
   ctx.state.set<SentRecord>(KEYS.sent(message.id), { timestamps: result.timestamps, at })
   if (message.ticketId !== undefined || message.kind !== 'notice') {
-    const entry = { thread: thread.replace(/^signal:/, ''), ...message.ticketId !== undefined ? { ticketId: message.ticketId } : {}, at }
+    const entry = { thread: thread.startsWith(`${SOURCE}:`) ? thread.slice(SOURCE.length + 1) : thread, ...message.ticketId !== undefined ? { ticketId: message.ticketId } : {}, at }
     for (const timestamp of result.timestamps) if (!ctx.state.get(KEYS.map(timestamp))) remember(ctx, timestamp, entry)
   }
   return 'sent'

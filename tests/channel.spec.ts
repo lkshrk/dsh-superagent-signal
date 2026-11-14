@@ -34,7 +34,7 @@ describe('sendSignal', () => {
   it('posts quoting the message it answers and maps the returned timestamps', async () => {
     const ctx = fakeContext()
     const { hub, send } = hubOf(ok(5000))
-    expect(await sendSignal(ctx, hub, config, reply(), log())).toBe('sent')
+    expect(await sendSignal(ctx, hub, reply(), log())).toBe('sent')
     expect(send).toHaveBeenCalledWith({ recipient: internalA, text: 'On it', quote: { timestamp: 1000, author: OWNER_UUID } })
     expect(lookup(ctx, 5000)).toMatchObject({ thread: `${internalA}:1000`, ticketId: 'T1' })
     expect(ctx.state.get(KEYS.sent('m1'))).toMatchObject({ timestamps: [5000] })
@@ -45,7 +45,7 @@ describe('sendSignal', () => {
     const first = { thread: 'first', ticketId: 'T0', at: new Date().toISOString() }
     ctx.state.set(KEYS.map(5000), first)
     const { hub } = hubOf(ok(5000, 5001))
-    await sendSignal(ctx, hub, config, reply(), log())
+    await sendSignal(ctx, hub, reply(), log())
     expect(ctx.state.get(KEYS.map(5000))).toEqual(first)
     expect(lookup(ctx, 5001)).toMatchObject({ ticketId: 'T1' })
   })
@@ -53,16 +53,16 @@ describe('sendSignal', () => {
   it('posts without a quote when the address has none', async () => {
     const ctx = fakeContext()
     const { hub, send } = hubOf(ok(5000))
-    await sendSignal(ctx, hub, config, reply({}, { group: internalA }), log())
+    await sendSignal(ctx, hub, reply({}, { group: internalA }), log())
     expect(send).toHaveBeenCalledWith({ recipient: internalA, text: 'On it' })
   })
 
   it('throws while the hub is down and posts once when it is back', async () => {
     const ctx = fakeContext()
     const { hub, send } = hubOf(new HubError('bad gateway', 502), ok(5000))
-    await expect(sendSignal(ctx, hub, config, reply(), log())).rejects.toMatchObject({ status: 502 })
+    await expect(sendSignal(ctx, hub, reply(), log())).rejects.toMatchObject({ status: 502 })
     expect(ctx.state.keys('signal-')).toEqual([])
-    expect(await sendSignal(ctx, hub, config, reply(), log())).toBe('sent')
+    expect(await sendSignal(ctx, hub, reply(), log())).toBe('sent')
     expect(send).toHaveBeenCalledTimes(2)
     expect(ctx.state.keys('signal-sent:')).toEqual([KEYS.sent('m1')])
   })
@@ -71,14 +71,14 @@ describe('sendSignal', () => {
     const ctx = fakeContext()
     ctx.state.set(KEYS.sent('m1'), { timestamps: [5000], at: new Date().toISOString() })
     const { hub, send } = hubOf(ok(6000))
-    expect(await sendSignal(ctx, hub, config, reply(), log())).toBe('sent')
+    expect(await sendSignal(ctx, hub, reply(), log())).toBe('sent')
     expect(send).not.toHaveBeenCalled()
   })
 
   it('a quote of a ticketless reply goes to the request\'s thread', async () => {
     const ctx = fakeContext()
     const { hub } = hubOf(ok(5000))
-    expect(await sendSignal(ctx, hub, config, reply({ ticketId: undefined }), log())).toBe('sent')
+    expect(await sendSignal(ctx, hub, reply({ ticketId: undefined }), log())).toBe('sent')
     expect(lookup(ctx, 5000)).toEqual({ thread: `${internalA}:1000`, at: expect.any(String) })
     const quoting = message({ seq: 2, timestamp: 6000, text: 'Yes', quote: { timestamp: 5000, author: { number: '', uuid: 'bot' }, text: 'Which test?' } })
     const pull = vi.fn(async () => ({ messages: [quoting], next: 2, missed: 0, reset: false }))
@@ -90,7 +90,7 @@ describe('sendSignal', () => {
     const ctx = fakeContext()
     const { hub } = hubOf(ok(5000))
     const notice = reply({ kind: 'notice', ticketId: undefined, channel: { source: SOURCE, thread: `signal:${internalA}:health`, address: { group: internalA } } })
-    expect(await sendSignal(ctx, hub, config, notice, log())).toBe('sent')
+    expect(await sendSignal(ctx, hub, notice, log())).toBe('sent')
     expect(lookup(ctx, 5000)).toBeUndefined()
     expect(ctx.state.get(KEYS.sent('m1'))).toMatchObject({ timestamps: [5000] })
   })
@@ -99,7 +99,7 @@ describe('sendSignal', () => {
     const ctx = fakeContext()
     const logger = log()
     const { hub } = hubOf({ timestamps: [5000], failures: [{ number: '+49151999', uuid: 'u-2', reason: 'unregistered' }] })
-    expect(await sendSignal(ctx, hub, config, reply({ text: 'secret words' }), logger)).toBe('sent')
+    expect(await sendSignal(ctx, hub, reply({ text: 'secret words' }), logger)).toBe('sent')
     const lines = [...logger.warn.mock.calls, ...logger.info.mock.calls].map(call => String(call[0]))
     expect(lines.join('\n')).toContain('unregistered')
     expect(lines.join('\n')).toContain('u-2')
@@ -109,14 +109,14 @@ describe('sendSignal', () => {
   it('throws when the hub reached nobody', async () => {
     const ctx = fakeContext()
     const { hub } = hubOf({ timestamps: [], failures: [{ number: '', uuid: 'u-2', reason: 'unregistered' }] })
-    await expect(sendSignal(ctx, hub, config, reply(), log())).rejects.toBeInstanceOf(HubError)
+    await expect(sendSignal(ctx, hub, reply(), log())).rejects.toBeInstanceOf(HubError)
     expect(ctx.state.keys('signal-')).toEqual([])
   })
 
   it.each([0, 502, 429, 403])('throws on hub status %i so the Outbox retries', async status => {
     const ctx = fakeContext()
     const { hub } = hubOf(new HubError('nope', status))
-    await expect(sendSignal(ctx, hub, config, reply(), log())).rejects.toMatchObject({ status })
+    await expect(sendSignal(ctx, hub, reply(), log())).rejects.toMatchObject({ status })
     expect(ctx.state.keys('signal-')).toEqual([])
   })
 
@@ -124,7 +124,7 @@ describe('sendSignal', () => {
     const ctx = fakeContext()
     const logger = log()
     const { hub } = hubOf(new HubError('nope', status))
-    expect(await sendSignal(ctx, hub, config, reply({ text: 'secret words' }), logger)).toBe('gone')
+    expect(await sendSignal(ctx, hub, reply({ text: 'secret words' }), logger)).toBe('gone')
     const line = String(logger.warn.mock.calls[0]?.[0])
     expect(line).toContain('m1')
     expect(line).toContain(String(status))
