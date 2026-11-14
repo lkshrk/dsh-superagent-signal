@@ -1,10 +1,13 @@
 import { z } from 'zod'
 import { HEALTH, SOURCE, SignalConfigSchema, groupInternalId, type SignalConfig } from './config.ts'
-import type { OutboundMessage, SourceContext, SourceKind } from './types.ts'
+import { imageKeys, readImage } from './attachments.ts'
+import type { HubClient } from './hub.ts'
+import type { ContextMessage, OutboundMessage, SourceContext, SourceKind } from './types.ts'
 
 export interface KindDeps {
   send(message: OutboundMessage): Promise<'sent' | 'gone'>
   context(): SourceContext | undefined
+  hub?(): HubClient | undefined
 }
 
 export function signalKind(deps: KindDeps): SourceKind<SignalConfig> {
@@ -42,6 +45,20 @@ export function signalKind(deps: KindDeps): SourceKind<SignalConfig> {
       send: (_host, message) => deps.send(message),
       link: () => ({ url: '', label: { zh: 'Signal', en: 'Signal' } }),
     },
+    threadContext: {
+      messageId: trigger => String(trigger.meta.timestamp),
+      async read(_commands, trigger, part) {
+        if (part === 'parent') return { messages: quoted(trigger), body: {} }
+        return { messages: [{ id: String(trigger.meta.timestamp), from: trigger.actor.id, at: trigger.at, text: trigger.text }], body: {} }
+      },
+      images: imageKeys,
+      async image(agent, _commands, _trigger, message, key, _stateDir, signal) {
+        const hub = deps.hub?.()
+        const config = deps.context()?.config<SignalConfig>(SOURCE)
+        if (!hub || !config) throw new Error('Image reading is unavailable: the Signal hub is not configured')
+        return readImage(agent, hub, SignalConfigSchema.parse(config), message, key, signal)
+      },
+    },
     find: () => ({ threads: [], terms: [] }),
     policy: {
       schema: z.object({ allowed: z.array(z.object({ id: z.string().trim().min(1), name: z.string().trim().max(100).optional() }).strict()).default([]) }).strict(),
@@ -53,4 +70,14 @@ export function signalKind(deps: KindDeps): SourceKind<SignalConfig> {
         cells: { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false } }],
     },
   }
+}
+
+const QUOTED = '\n\n> quoted: '
+
+function quoted(trigger: { meta: Record<string, unknown>; text: string; at: string }): ContextMessage[] {
+  const at = trigger.text.indexOf(QUOTED)
+  if (trigger.meta.quote === undefined || at < 0) return []
+  const rest = trigger.text.slice(at + QUOTED.length)
+  const end = rest.search(/\n\[attachment signal:/)
+  return [{ id: String(trigger.meta.quote), from: 'unknown', at: trigger.at, text: end < 0 ? rest : rest.slice(0, end) }]
 }

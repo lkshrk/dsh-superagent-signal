@@ -1,3 +1,4 @@
+import { attachmentLine } from './attachments.ts'
 import { SOURCE, groupInternalId, type SignalConfig } from './config.ts'
 import type { HubClient, HubMessage } from './hub.ts'
 import { KEYS, type MapEntry, lookup, prune, remember } from './state.ts'
@@ -14,10 +15,11 @@ export interface IntakeOptions { now?: () => Date; log?: IntakeLog }
 const PREFIX = 'dsh-superagent-signal:'
 export const consoleLog: IntakeLog = { info: line => console.info(`${PREFIX} ${line}`), warn: line => console.warn(`${PREFIX} ${line}`) }
 
-export function triggerOf(message: HubMessage, actor: string, thread: string, group: string): Trigger {
+export function triggerOf(message: HubMessage, actor: string, thread: string, group: string, maxBytes: number): Trigger {
   const { timestamp, quote, attachments, sender } = message
   let text = message.kind === 'edit' ? `(edited) ${message.text}` : message.text
   if (quote && message.kind !== 'edit' && thread === threadId(group, timestamp)) text += `\n\n> quoted: ${quote.text}`
+  if (attachments.length) text = [text, ...attachments.map(a => attachmentLine(a, maxBytes))].filter(part => part !== '').join('\n')
   return {
     id: triggerId(actor, timestamp),
     source: SOURCE,
@@ -62,14 +64,14 @@ export async function pollSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull'
     log.warn(`hub dropped ${page.missed} messages older than its replay age before they were taken in`)
   }
   for (const message of page.messages) {
-    await take(ctx, message, group, counts, log, now())
+    await take(ctx, message, group, config.attachmentMaxBytes, counts, log, now())
     ctx.state.set(KEYS.cursor, message.seq)
   }
   if (page.reset || after === undefined || page.next >= after) ctx.state.set(KEYS.cursor, page.next)
   prune(ctx, now())
 }
 
-async function take(ctx: SourceContext, message: HubMessage, group: string | undefined, counts: IntakeCounts, log: IntakeLog, now: Date): Promise<void> {
+async function take(ctx: SourceContext, message: HubMessage, group: string | undefined, maxBytes: number, counts: IntakeCounts, log: IntakeLog, now: Date): Promise<void> {
   const where = `seq ${message.seq}, kind ${message.kind}, timestamp ${message.timestamp}`
   if (group === undefined || message.group?.id !== group || (message.kind !== 'message' && message.kind !== 'edit')) {
     counts.ignored++
@@ -89,7 +91,7 @@ async function take(ctx: SourceContext, message: HubMessage, group: string | und
   }
   if (thread.ticketId !== undefined && thread.id === ticketThreadId(group, thread.ticketId)) attach(ctx, thread.ticketId, thread.id, log)
   if (!thread.mapped) remember(ctx, message.timestamp, { thread: thread.id, ...thread.ticketId ? { ticketId: thread.ticketId } : {}, at: now.toISOString() })
-  await ctx.receive(triggerOf(message, actor, thread.id, group))
+  await ctx.receive(triggerOf(message, actor, thread.id, group, maxBytes))
   counts.taken++
 }
 

@@ -90,6 +90,7 @@ export interface SourceKind<C extends Record<string, unknown>> {
     send(host: unknown, message: OutboundMessage): Promise<'sent' | 'gone'>
     link(address: Record<string, string>): { url: string; label: Localized }
   }
+  threadContext?: ThreadContext<C>
   find?(query: string): { threads: string[]; terms: string[] }
   policy?: {
     schema: z.ZodType<Record<string, unknown> & { allowed: { id: string; name?: string }[] }>
@@ -103,4 +104,29 @@ export interface SourceKind<C extends Record<string, unknown>> {
 export interface SourceHost {
   sources: { register(kind: object): () => void }
   context(kind: { kind: string; health: readonly string[] }): SourceContext
+}
+
+export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+export interface ImageAttachmentRef { [key: string]: unknown }
+/** The parts of dsh-agent's Agent that reading an image touches. */
+export interface Agent {
+  ctx: {
+    get(name: 'attachments'): {
+      imageLimits: { maxImageBytes: number; maxMessageImageBytes: number }
+      saveImage(input: { data: Uint8Array; mediaType: ImageMediaType; name: string }): Promise<ImageAttachmentRef>
+    } | undefined
+    get(name: 'llm'): { resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<{ inputModalities?: string[] }> } | undefined
+  }
+  session: { requestHeader(): { config?: { provider?: string; model?: string } } | undefined }
+  options: { provider?: string; model?: string }
+}
+export interface ContextMessage { id: string; from: string; at: string; text: string; bot?: true; deleted?: true; reply_to?: string }
+export type ContextPartName = 'thread' | 'root' | 'parent'
+export interface ContextPart { messages: ContextMessage[]; next?: string | undefined; body: Record<string, unknown>; status?: string }
+export interface ThreadContext<C> {
+  messageId(trigger: Trigger): string
+  read(commands: unknown, trigger: Trigger, part: ContextPartName, cursor: string | undefined, config: C): Promise<ContextPart>
+  images?(text: string): string[]
+  image?(agent: Agent, commands: unknown, trigger: Trigger, message: { id: string; text: string }, key: string, stateDir: string,
+    signal: AbortSignal): Promise<unknown>
 }
