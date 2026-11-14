@@ -80,6 +80,12 @@ describe('pull validation', () => {
     expect(pulled.messages[0]).toEqual(valid)
   })
 
+  it('passes unknown kinds through', async () => {
+    const sticker = { ...valid, kind: 'sticker' }
+    hub.respond({ json: { messages: [sticker], next: 2, missed: 0, reset: false } })
+    expect((await client.pull(0, 0, 1, signal())).messages).toEqual([sticker])
+  })
+
   it('fails with 502 when a message entry is malformed', async () => {
     const { sender: _sender, ...broken } = valid
     hub.respond({ json: { messages: [valid, broken], next: 3, missed: 0, reset: false } })

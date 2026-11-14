@@ -5,7 +5,7 @@ export interface HubMessage {
   seq: number
   receivedAt: string
   timestamp: number
-  kind: 'message' | 'edit' | 'reaction' | 'poll_vote'
+  kind: 'message' | 'edit' | 'reaction' | 'poll_vote' | (string & {})
   sender: { number: string; uuid: string; name: string; device: number }
   group: { id: string; internalId: string; restId: string; name: string } | null
   text: string
@@ -30,7 +30,7 @@ const MessageSchema = z.object({
   seq: z.number().int(),
   receivedAt: z.string(),
   timestamp: z.number(),
-  kind: z.enum(['message', 'edit', 'reaction', 'poll_vote']),
+  kind: z.string().min(1),
   sender: identity.extend({ name: z.string(), device: z.number() }),
   group: z.object({ id: z.string(), internalId: z.string(), restId: z.string(), name: z.string() }).loose().nullable(),
   text: z.string(),
