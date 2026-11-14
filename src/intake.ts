@@ -87,9 +87,18 @@ async function take(ctx: SourceContext, message: HubMessage, group: string | und
     log.info(`ignored an edit of an unknown message (${where}, edit of ${message.editOf})`)
     return
   }
+  if (thread.ticketId !== undefined && thread.id === ticketThreadId(group, thread.ticketId)) attach(ctx, thread.ticketId, thread.id, log)
   if (!thread.mapped) remember(ctx, message.timestamp, { thread: thread.id, ...thread.ticketId ? { ticketId: thread.ticketId } : {}, at: now.toISOString() })
   await ctx.receive(triggerOf(message, actor, thread.id, group))
   counts.taken++
+}
+
+function attach(ctx: SourceContext, ticketId: string, thread: string, log: IntakeLog): void {
+  try {
+    ctx.tickets.attachThread?.(ticketId, { source: SOURCE, id: thread })
+  } catch (error) {
+    log.warn(`ticket ${ticketId} did not take thread ${thread} in: ${error instanceof Error ? error.message : 'unknown error'}`)
+  }
 }
 
 function route(ctx: SourceContext, message: HubMessage, group: string, now: Date): { id: string; ticketId?: string; mapped?: true } | undefined {

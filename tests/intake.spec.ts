@@ -342,6 +342,60 @@ describe('intake', () => {
   })
 })
 
+describe('quotes to tickets from other Sources', () => {
+  const noticeThread = ticketThreadId(internalA, 'T9')
+  const quote = { timestamp: 7000, author: { number: '', uuid: 'dsh-uuid' }, text: 'Needs you' }
+  const setup = () => {
+    const ctx = fakeContext()
+    remember(ctx, 7000, { thread: noticeThread, ticketId: 'T9', at: ago(DAY) })
+    const attach = vi.fn()
+    ctx.tickets.attachThread = attach
+    return { ctx, attach }
+  }
+
+  it("attaches a foreign ticket's thread before taking a quote to its notice in", async () => {
+    const { ctx, attach } = setup()
+    const order: string[] = []
+    attach.mockImplementation(() => { order.push('attach') })
+    ctx.onReceive = () => { order.push('receive'); return 'stored' }
+    const { hub } = hubOf({ messages: [message({ seq: 3, timestamp: 7100, quote })] })
+    await run(ctx, hub)
+    expect(attach).toHaveBeenCalledWith('T9', { source: 'signal', id: noticeThread })
+    expect(order).toEqual(['attach', 'receive'])
+    expect(ctx.received[0]!.threads[0]).toEqual({ source: 'signal', id: noticeThread })
+  })
+
+  it('still takes the quote in when the ticket refuses the attach', async () => {
+    const { ctx, attach } = setup()
+    attach.mockImplementation(() => { throw new Error('A person stopped this ticket; new work needs an accept through orchestrator_route') })
+    const logger = log()
+    const c = counts()
+    const { hub } = hubOf({ messages: [message({ seq: 3, timestamp: 7100, quote })] })
+    await run(ctx, hub, c, logger)
+    expect(ctx.received).toHaveLength(1)
+    expect(ctx.received[0]!.threads[0]!.id).toBe(noticeThread)
+    expect(c.taken).toBe(1)
+    expect(logger.warn.mock.calls.map(call => String(call[0])).join('\n')).toContain('T9')
+  })
+
+  it('does not attach a thread a Signal request started', async () => {
+    const { ctx, attach } = setup()
+    remember(ctx, 7001, { thread: `${internalA}:800`, ticketId: 'T9', at: ago(DAY) })
+    const { hub } = hubOf({ messages: [message({ seq: 3, timestamp: 7100, quote: { ...quote, timestamp: 7001 } })] })
+    await run(ctx, hub)
+    expect(attach).not.toHaveBeenCalled()
+    expect(ctx.received).toHaveLength(1)
+  })
+
+  it('takes the quote in on a host without attachThread', async () => {
+    const { ctx } = setup()
+    delete ctx.tickets.attachThread
+    const { hub } = hubOf({ messages: [message({ seq: 3, timestamp: 7100, quote })] })
+    await run(ctx, hub)
+    expect(ctx.received).toHaveLength(1)
+  })
+})
+
 function ticket(id: string, updatedAt: string): Ticket {
   return { id, title: id, channels: [], origin: { triggerId: 'x', triggerIds: ['x'] }, assignments: [], updatedAt }
 }

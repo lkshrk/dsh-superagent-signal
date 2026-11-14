@@ -7,7 +7,7 @@ export interface KindDeps {
   context(): SourceContext | undefined
 }
 
-export function signalKind(_deps: KindDeps): SourceKind<SignalConfig> {
+export function signalKind(deps: KindDeps): SourceKind<SignalConfig> {
   return {
     kind: SOURCE,
     title: { zh: 'Signal', en: 'Signal' },
@@ -36,6 +36,11 @@ export function signalKind(_deps: KindDeps): SourceKind<SignalConfig> {
       return configured !== undefined && meta.group === configured
         ? { listened: true, observed: false, row: 'chat' }
         : { listened: false, reason: 'group_not_configured' }
+    },
+    channel: {
+      allowed: (address, config) => address.group === groupInternalId(config.groupId),
+      send: (_host, message) => deps.send(message),
+      link: () => ({ url: '', label: { zh: 'Signal', en: 'Signal' } }),
     },
     find: () => ({ threads: [], terms: [] }),
     policy: {
