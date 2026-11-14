@@ -39,6 +39,16 @@ describe('sendSignal', () => {
     expect(ctx.state.get(KEYS.sent('m1'))).toMatchObject({ timestamps: [5000] })
   })
 
+  it('keeps a map entry that already exists for a returned timestamp', async () => {
+    const ctx = fakeContext()
+    const first = { thread: 'first', ticketId: 'T0', at: new Date().toISOString() }
+    ctx.state.set(KEYS.map(5000), first)
+    const { hub } = hubOf(ok(5000, 5001))
+    await sendSignal(ctx, hub, config, reply(), log())
+    expect(ctx.state.get(KEYS.map(5000))).toEqual(first)
+    expect(lookup(ctx, 5001)).toMatchObject({ ticketId: 'T1' })
+  })
+
   it('posts without a quote when the address has none', async () => {
     const ctx = fakeContext()
     const { hub, send } = hubOf(ok(5000))

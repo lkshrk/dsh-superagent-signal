@@ -1,11 +1,9 @@
 import type { SignalConfig } from './config.ts'
 import { HubError, type HubClient, type SendInput } from './hub.ts'
-import type { IntakeLog } from './intake.ts'
+import { consoleLog, type IntakeLog } from './intake.ts'
 import { KEYS, remember, type SentRecord } from './state.ts'
 import type { OutboundMessage, SourceContext } from './types.ts'
 
-const PREFIX = 'dsh-superagent-signal:'
-const consoleLog: IntakeLog = { info: line => console.info(`${PREFIX} ${line}`), warn: line => console.warn(`${PREFIX} ${line}`) }
 const NEVER_SUCCEEDS = new Set([400, 413])
 
 export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'>, _config: SignalConfig, message: OutboundMessage, log: IntakeLog = consoleLog): Promise<'sent' | 'gone'> {
@@ -32,7 +30,7 @@ export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'
   ctx.state.set<SentRecord>(KEYS.sent(message.id), { timestamps: result.timestamps, at })
   if (message.ticketId !== undefined) {
     const entry = { thread: thread.replace(/^signal:/, ''), ticketId: message.ticketId, at }
-    for (const timestamp of result.timestamps) remember(ctx, timestamp, entry)
+    for (const timestamp of result.timestamps) if (!ctx.state.get(KEYS.map(timestamp))) remember(ctx, timestamp, entry)
   }
   return 'sent'
 }

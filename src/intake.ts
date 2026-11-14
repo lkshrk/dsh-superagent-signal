@@ -12,7 +12,7 @@ export interface IntakeLog { info(line: string): void; warn(line: string): void 
 export interface IntakeOptions { now?: () => Date; log?: IntakeLog }
 
 const PREFIX = 'dsh-superagent-signal:'
-const consoleLog: IntakeLog = { info: line => console.info(`${PREFIX} ${line}`), warn: line => console.warn(`${PREFIX} ${line}`) }
+export const consoleLog: IntakeLog = { info: line => console.info(`${PREFIX} ${line}`), warn: line => console.warn(`${PREFIX} ${line}`) }
 
 export function triggerOf(message: HubMessage, actor: string, thread: string, group: string): Trigger {
   const { timestamp, quote, attachments, sender } = message
