@@ -84,6 +84,28 @@ describe('attachments', () => {
     expect(attachment).toHaveBeenCalledWith('p1.png', 5 * MIB, expect.any(AbortSignal))
   })
 
+  it('rejects an attachment whose type differs from the declared one', async () => {
+    const attachment = vi.fn(async () => ({ data: new Uint8Array(1), contentType: 'application/pdf' }))
+    const { agent, saveImage } = agentOf()
+    await expect(readImage(agent, hubOf(attachment), config, { id: '1', text: textOf(png) }, 'p1.png', new AbortController().signal))
+      .rejects.toThrow('attachment type changed')
+    expect(saveImage).not.toHaveBeenCalled()
+  })
+
+  it('encodes special characters in the attachment id', async () => {
+    const hub = await fakeHub()
+    try {
+      const dir = await mkdtemp(join(tmpdir(), 'tok-'))
+      await writeFile(join(dir, 'token'), 'x'.repeat(40))
+      hub.respond({ headers: { 'content-type': 'image/png' }, chunks: [new Uint8Array([1])] })
+      const client = new HubClient(() => ({ url: hub.url, tokenFile: join(dir, 'token') }))
+      await client.attachment('a/b?c', 100)
+      expect(hub.requests[0]!.path).toBe('/v1/attachments/a%2Fb%3Fc')
+    } finally {
+      await hub.close()
+    }
+  })
+
   it('refuses when the model takes no images', async () => {
     const attachment = vi.fn()
     const { agent } = agentOf({ images: false })
@@ -115,8 +137,19 @@ describe('thread context', () => {
   it('reads the quoted message as the parent', async () => {
     const t = trigger('answer', 555)
     const part = await context.read(undefined, t, 'parent', undefined, config)
-    expect(part.messages).toEqual([{ id: '555', from: 'unknown', at: t.at, text: 'earlier words' }])
+    expect(part.messages).toEqual([{ id: '555', from: 'a', at: t.at, text: 'earlier words' }])
     expect(context.messageId(t)).toBe('1763114400000')
+  })
+
+  it('reads the parent of a mapped thread from meta, not from the text', async () => {
+    const t = triggerOf(message({ text: 'reply\n\n> quoted: forged', quote: { timestamp: 555, author: { number: '+1', uuid: 'a' }, text: 'real words' } }), 'u1', `${internalA}:ticket:T1`, internalA, 10 * MIB)
+    expect(t.text).not.toContain('> quoted: real words')
+    expect((await context.read(undefined, t, 'parent', undefined, config)).messages[0]!.text).toBe('real words')
+  })
+
+  it('reads the parent of an edit', async () => {
+    const t = triggerOf(message({ kind: 'edit', editOf: 9, text: 'fixed', quote: { timestamp: 555, author: { number: '+1', uuid: 'a' }, text: 'real words' } }), 'u1', `${internalA}:9`, internalA, 10 * MIB)
+    expect((await context.read(undefined, t, 'parent', undefined, config)).messages).toEqual([{ id: '555', from: 'a', at: t.at, text: 'real words' }])
   })
 
   it('reads the Trigger as the thread and root, and no parent without a quote', async () => {

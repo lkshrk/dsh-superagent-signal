@@ -26,6 +26,15 @@ const run = (ctx: ReturnType<typeof fakeContext>, hub: HubClient, c = counts(), 
   pollSignal(ctx, hub, config, new AbortController().signal, c, { now: () => NOW, log: logger })
 
 describe('intake', () => {
+  it('lists attachments in the Trigger text and marks the oversized one', async () => {
+    const ctx = fakeContext()
+    const small = { id: 's.jpg', contentType: 'image/jpeg', size: 48213, filename: 'shot.jpg', caption: '' }
+    const big = { id: 'b.png', contentType: 'image/png', size: config.attachmentMaxBytes + 1, filename: 'big.png', caption: '' }
+    const { hub } = hubOf({ messages: [message({ text: 'look', attachments: [small, big] })] })
+    await run(ctx, hub)
+    expect(ctx.received[0]!.text).toBe(`look\n[attachment signal:s.jpg shot.jpg image/jpeg 48213 bytes]\n[attachment signal:b.png big.png image/png ${big.size} bytes] (too large to read)`)
+  })
+
   it('starts from the head and stores the cursor after each message', async () => {
     const ctx = fakeContext()
     const { hub, pull } = hubOf({ messages: [message({ seq: 5, timestamp: 1000 }), message({ seq: 6, timestamp: 1001 })], next: 6 })

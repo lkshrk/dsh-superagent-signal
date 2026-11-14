@@ -72,12 +72,8 @@ export function signalKind(deps: KindDeps): SourceKind<SignalConfig> {
   }
 }
 
-const QUOTED = '\n\n> quoted: '
-
-function quoted(trigger: { meta: Record<string, unknown>; text: string; at: string }): ContextMessage[] {
-  const at = trigger.text.indexOf(QUOTED)
-  if (trigger.meta.quote === undefined || at < 0) return []
-  const rest = trigger.text.slice(at + QUOTED.length)
-  const end = rest.search(/\n\[attachment signal:/)
-  return [{ id: String(trigger.meta.quote), from: 'unknown', at: trigger.at, text: end < 0 ? rest : rest.slice(0, end) }]
+function quoted(trigger: { meta: Record<string, unknown>; at: string }): ContextMessage[] {
+  const { quote, quoteText, quoteAuthor } = trigger.meta
+  if (quote === undefined || typeof quoteText !== 'string') return []
+  return [{ id: String(quote), from: typeof quoteAuthor === 'string' ? quoteAuthor : 'unknown', at: trigger.at, text: quoteText }]
 }

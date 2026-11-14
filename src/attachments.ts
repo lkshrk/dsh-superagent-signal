@@ -39,13 +39,14 @@ export async function readImage(agent: Agent, hub: Pick<HubClient, 'attachment'>
   if (!info.inputModalities?.includes('image')) throw new Error(`Model ${model} does not support image input; the image has not been inspected`)
   signal.throwIfAborted()
   const limit = Math.min(config.attachmentMaxBytes, attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
-  let fetched: { data: Uint8Array }
+  let fetched: { data: Uint8Array; contentType: string }
   try {
     fetched = await hub.attachment(key, limit, signal)
   } catch (error) {
     if (error instanceof HubError && error.status === 404) throw new Error('attachment no longer available')
     throw error
   }
+  if (fetched.contentType.split(';')[0]!.trim().toLowerCase() !== line.mediaType) throw new Error('attachment type changed')
   signal.throwIfAborted()
   const image = await attachments.saveImage({ data: fetched.data, mediaType: line.mediaType, name: `${key.replace(/[^\w.-]/g, '_')}${key.includes('.') ? '' : EXTENSIONS[line.mediaType]}` })
   signal.throwIfAborted()

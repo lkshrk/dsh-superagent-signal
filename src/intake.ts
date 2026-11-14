@@ -36,7 +36,7 @@ export function triggerOf(message: HubMessage, actor: string, thread: string, gr
       seq: message.seq,
       kind: message.kind,
       sender: { uuid: sender.uuid, number: sender.number, name: sender.name },
-      ...quote ? { quote: quote.timestamp } : {},
+      ...quote ? { quote: quote.timestamp, quoteText: quote.text, quoteAuthor: quote.author.uuid || quote.author.number } : {},
       ...attachments.length ? { attachments } : {},
     },
   }
