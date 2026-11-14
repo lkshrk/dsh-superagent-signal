@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SignalConfigSchema } from '../src/config.ts'
 import { ticketThreadId } from '../src/intake.ts'
 import { HOST_HEALTH_ENTRIES, type NoticeCounts, noticeRound, originLabel, transitionOf } from '../src/notices.ts'
-import { KEYS, type NotifiedRecord } from '../src/state.ts'
+import { KEYS, type NotifiedRecord, prune } from '../src/state.ts'
 import type { Health, OutboundMessage, Ticket, TicketChange, TicketCursor, TicketStage, Trigger } from '../src/types.ts'
 import { fakeContext, internalA, restA } from './fakes.ts'
 
@@ -104,6 +104,23 @@ describe('ticket notices', () => {
     s.round(at(10))
     expect(s.sent).toHaveLength(1)
     expect(s.counts.posted).toBe(1)
+  })
+
+  it('does not repeat a question that waited past the horizon when the ticket is touched again', () => {
+    const s = setup()
+    started(s)
+    const waiting = ticket('T1', { attention: { id: 'a1', question: 'Which repo?' } })
+    s.ctx.ticketStore.set('T1', waiting)
+    s.put(waiting, question)
+    s.round(at(5))
+    expect(s.sent).toHaveLength(1)
+    const later = 15 * 24 * 3600
+    prune(s.ctx, at(later))
+    const touched = { ...waiting, updatedAt: iso(later) }
+    s.ctx.ticketStore.set('T1', touched)
+    s.put(touched, question)
+    s.round(at(later + 5))
+    expect(s.sent).toHaveLength(1)
   })
 
   it('announces blocked and failed reports keyed by the report time', () => {

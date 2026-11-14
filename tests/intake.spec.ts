@@ -322,15 +322,15 @@ describe('intake', () => {
     expect(ctx.state.get(KEYS.notified('t-ended'))).toBeUndefined()
   })
 
-  it('prunes notified records of tickets that are gone or quiet past the horizon', () => {
+  it('prunes notified records of tickets that are gone and keeps those of open tickets however quiet', () => {
     const ctx = fakeContext()
     ctx.ticketStore.set('t-quiet', ticket('t-quiet', ago(15 * DAY)))
     ctx.ticketStore.set('t-live', ticket('t-live', ago(DAY)))
     ctx.state.set(KEYS.notified('t-gone'), { keys: ['a'] })
     ctx.state.set(KEYS.notified('t-quiet'), { keys: ['a'] })
     ctx.state.set(KEYS.notified('t-live'), { keys: ['a'], ended: ago(DAY) })
-    expect(prune(ctx, NOW)).toBe(2)
-    expect(ctx.state.keys('signal-notified:')).toEqual([KEYS.notified('t-live')])
+    expect(prune(ctx, NOW)).toBe(1)
+    expect(ctx.state.keys('signal-notified:').sort()).toEqual([KEYS.notified('t-live'), KEYS.notified('t-quiet')])
   })
 
   it('prunes at the end of each round', async () => {

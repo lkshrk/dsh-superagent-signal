@@ -44,7 +44,7 @@ export function prune(ctx: SourceContext, now: Date): number {
     const record = ctx.state.get<NotifiedRecord>(key)
     const ticket = ctx.tickets.get(key.slice(PREFIX.notified.length))
     const endedLongAgo = record?.ended !== undefined && expired(record.ended, now)
-    if (!ticket || endedLongAgo || expired(ticket.updatedAt, now)) drop(key)
+    if (!ticket || endedLongAgo) drop(key)
   }
   ctx.state.set(KEYS.pruned, now.toISOString())
   return removed
