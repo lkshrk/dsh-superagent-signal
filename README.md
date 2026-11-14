@@ -18,7 +18,8 @@ More detail:
 
 ## Requirements
 
-- dsh-superagent `>= 0.3.0` (`lkshrk/dsh-superagent`). The Source registers through its `orchestrator` service and uses members that older versions lack. On an older one it stays in health `error` and takes nothing in.
+- dsh `^0.2.1-alpha.2 || ^0.2.2-0` (the `engines.dsh` range) with the dsh-superagent plugin.
+- dsh-superagent `>= 0.3.0` (`lkshrk/dsh-superagent`). The Source checks this at runtime, not through `engines`. The Source registers through its `orchestrator` service and uses members that older versions lack. On an older one it stays in health `error` and takes nothing in.
 - A [signal hub](https://github.com/lkshrk/signal-hub) with a consumer named `dsh` that lists exactly the configured group, with `maxReplayAge: 14d`.
 - Node.js `^22.19.0 || >=24.0.0`.
 
