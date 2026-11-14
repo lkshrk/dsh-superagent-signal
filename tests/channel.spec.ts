@@ -3,9 +3,10 @@ import { sendSignal } from '../src/channel.ts'
 import { SignalConfigSchema, SOURCE } from '../src/config.ts'
 import { HubError, type HubClient, type SendInput, type SendResult } from '../src/hub.ts'
 import { signalKind } from '../src/kind.ts'
+import { pollSignal } from '../src/intake.ts'
 import { KEYS, lookup } from '../src/state.ts'
 import type { OutboundMessage } from '../src/types.ts'
-import { OWNER_UUID, fakeContext, internalA, restA } from './fakes.ts'
+import { OWNER_UUID, fakeContext, internalA, message, restA } from './fakes.ts'
 
 const config = SignalConfigSchema.parse({ hubUrl: 'http://hub', tokenFile: '/run/token', groupId: restA })
 
@@ -72,6 +73,17 @@ describe('sendSignal', () => {
     const { hub, send } = hubOf(ok(6000))
     expect(await sendSignal(ctx, hub, config, reply(), log())).toBe('sent')
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('a quote of a ticketless reply goes to the request\'s thread', async () => {
+    const ctx = fakeContext()
+    const { hub } = hubOf(ok(5000))
+    expect(await sendSignal(ctx, hub, config, reply({ ticketId: undefined }), log())).toBe('sent')
+    expect(lookup(ctx, 5000)).toEqual({ thread: `${internalA}:1000`, at: expect.any(String) })
+    const quoting = message({ seq: 2, timestamp: 6000, text: 'Yes', quote: { timestamp: 5000, author: { number: '', uuid: 'bot' }, text: 'Which test?' } })
+    const pull = vi.fn(async () => ({ messages: [quoting], next: 2, missed: 0, reset: false }))
+    await pollSignal(ctx, { pull } as unknown as HubClient, config, new AbortController().signal, { taken: 0, refused: 0, ignored: 0, missed: 0 }, { log: log() })
+    expect(ctx.received[0]!.threads).toEqual([{ source: SOURCE, id: `${internalA}:1000` }])
   })
 
   it('does not map a health notice, so a quote of it starts a new request', async () => {

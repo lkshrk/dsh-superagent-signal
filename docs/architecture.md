@@ -72,7 +72,7 @@ Every message the Source takes in or sends is mapped from its Signal timestamp t
 - found: the message joins that thread;
 - not found, or older than the map horizon: a quote starts a new thread with the quoted text appended; an edit is ignored.
 
-dsh-superagent's replies and ticket notices are mapped to their ticket when sent. A notice about a ticket from another Source lives on the thread `<group>:ticket:<ticket id>`. When the owner quotes it, the Source adds that thread to the ticket with `tickets.attachThread` before handing the Trigger in, so the answer reaches the ticket.
+dsh-superagent's replies, including those sent before a ticket exists, and its ticket notices are mapped when sent: to their thread, and to their ticket when they have one. Health notices are not mapped. A notice about a ticket from another Source lives on the thread `<group>:ticket:<ticket id>`. When the owner quotes it, the Source adds that thread to the ticket with `tickets.attachThread` before handing the Trigger in, so the answer reaches the ticket.
 
 The map horizon is 14 days, the hub's retention. Times the Source stores and compares are the hub's `receivedAt` or the local clock, never the sender's Signal timestamp, which serves only as an identifier. At most once an hour, a pull prunes map and send records older than the horizon, and notice records of tickets that are gone, ended more than 14 days ago, or unchanged for 14 days.
 

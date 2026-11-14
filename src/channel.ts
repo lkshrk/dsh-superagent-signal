@@ -28,8 +28,8 @@ export async function sendSignal(ctx: SourceContext, hub: Pick<HubClient, 'send'
   if (result.timestamps.length === 0) throw new HubError(`the hub delivered message ${message.id} to nobody`, 502)
   const at = new Date().toISOString()
   ctx.state.set<SentRecord>(KEYS.sent(message.id), { timestamps: result.timestamps, at })
-  if (message.ticketId !== undefined) {
-    const entry = { thread: thread.replace(/^signal:/, ''), ticketId: message.ticketId, at }
+  if (message.ticketId !== undefined || message.kind !== 'notice') {
+    const entry = { thread: thread.replace(/^signal:/, ''), ...message.ticketId !== undefined ? { ticketId: message.ticketId } : {}, at }
     for (const timestamp of result.timestamps) if (!ctx.state.get(KEYS.map(timestamp))) remember(ctx, timestamp, entry)
   }
   return 'sent'
