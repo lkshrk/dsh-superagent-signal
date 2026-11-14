@@ -109,12 +109,19 @@ describe('pull validation', () => {
 
 describe('transport', () => {
   it('reports an abort while the body streams as aborted, not as invalid JSON', async () => {
-    const streaming = (async (_url, init) => new Response(new ReadableStream({
-      start: stream => { init?.signal?.addEventListener('abort', () => stream.error(init.signal?.reason)) },
-    }), { status: 200 })) as typeof fetch
+    let opened!: () => void
+    const bodyOpen = new Promise<void>(resolve => { opened = resolve })
+    const streaming = (async (_url, init) => {
+      const response = new Response(new ReadableStream({
+        start: stream => { init?.signal?.addEventListener('abort', () => stream.error(init.signal?.reason)) },
+      }), { status: 200 })
+      opened()
+      return response
+    }) as typeof fetch
     const aborting = new HubClient(() => ({ url: hub.url, tokenFile }), streaming)
     const controller = new AbortController()
     const pending = rejection(aborting.pull(1, 30, 100, controller.signal))
+    await bodyOpen
     controller.abort()
     const error = await pending
     expect(error).toBeInstanceOf(HubError)
