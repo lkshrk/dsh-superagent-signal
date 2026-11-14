@@ -56,6 +56,7 @@ export const OWNER_NUMBER = '+4915112345678'
 
 export interface FakeContext extends SourceContext {
   received: Trigger[]
+  results: ReceiveResult[]
   store: Map<string, unknown>
   ticketStore: Map<string, Ticket>
   admitted: Set<string>
@@ -66,12 +67,14 @@ export function fakeContext(): FakeContext {
   const store = new Map<string, unknown>()
   const ticketStore = new Map<string, Ticket>()
   const received: Trigger[] = []
+  const results: ReceiveResult[] = []
   const ctx: FakeContext = {
     received,
+    results,
     store,
     ticketStore,
     admitted: new Set([OWNER_UUID]),
-    onReceive: () => 'stored',
+    onReceive: trigger => received.some(seen => seen.id === trigger.id) ? 'duplicate' : 'stored',
     deployment: { repository: 'lkshrk/example' },
     ready: Promise.resolve(),
     configured: () => true,
@@ -79,6 +82,7 @@ export function fakeContext(): FakeContext {
     receive: async trigger => {
       const result = await ctx.onReceive(trigger)
       received.push(trigger)
+      results.push(result)
       return result
     },
     admits: actor => actor.human && ctx.admitted.has(actor.id),

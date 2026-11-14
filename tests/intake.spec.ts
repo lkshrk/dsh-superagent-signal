@@ -229,16 +229,41 @@ describe('intake', () => {
 
   it('replays harmlessly after a hub reset and shows it', async () => {
     const ctx = fakeContext()
-    ctx.state.set(KEYS.cursor, 120)
-    ctx.onReceive = () => 'duplicate'
     const logger = log()
     const c = counts()
-    const { hub } = hubOf({ messages: [message({ seq: 1, timestamp: 1000 }), message({ seq: 2, timestamp: 1001 })], next: 2, reset: true })
+    const { hub } = hubOf(
+      { messages: [message({ seq: 100, timestamp: 1000 }), message({ seq: 101, timestamp: 1001 })], next: 101 },
+      { messages: [message({ seq: 1, timestamp: 1000 }), message({ seq: 2, timestamp: 1001 })], next: 2, reset: true },
+    )
     await run(ctx, hub, c, logger)
+    expect(c.reset).toBeUndefined()
+    await run(ctx, hub, c, logger)
+    expect(ctx.results).toEqual(['stored', 'stored', 'duplicate', 'duplicate'])
+    expect(ctx.received[2]!.id).toBe(ctx.received[0]!.id)
+    expect(ctx.received[3]!.id).toBe(ctx.received[1]!.id)
     expect(c.reset).toBe(NOW.toISOString())
-    expect(c.taken).toBe(2)
+    expect(c.taken).toBe(4)
     expect(ctx.state.get(KEYS.cursor)).toBe(2)
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('hub log was reset; replaying from its oldest message'))
+  })
+
+  it('never moves the cursor backwards without a reset', async () => {
+    const ctx = fakeContext()
+    ctx.state.set(KEYS.cursor, 50)
+    const { hub } = hubOf({ messages: [], next: 10 })
+    await run(ctx, hub)
+    expect(ctx.state.get(KEYS.cursor)).toBe(50)
+  })
+
+  it('keeps the first map entry of a message when it is replayed', async () => {
+    const ctx = fakeContext()
+    remember(ctx, 900, { thread: 'thread-y', at: ago(DAY) })
+    remember(ctx, 1200, { thread: 'thread-x', ticketId: 't-x', at: ago(2 * DAY) })
+    const quote = { timestamp: 900, author: { number: '', uuid: 'dsh-uuid' }, text: 'Working on it' }
+    const { hub } = hubOf({ messages: [message({ seq: 3, timestamp: 1200, quote })], reset: true })
+    await run(ctx, hub)
+    expect(ctx.state.get(KEYS.map(1200))).toEqual({ thread: 'thread-x', ticketId: 't-x', at: ago(2 * DAY) })
+    expect(ctx.received[0]!.threads[0]!.id).toBe('thread-x')
   })
 
   it('adds missed messages to the count', async () => {

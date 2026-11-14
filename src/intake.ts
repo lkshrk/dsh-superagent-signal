@@ -1,6 +1,6 @@
 import { SOURCE, groupInternalId, type SignalConfig } from './config.ts'
 import type { HubClient, HubMessage } from './hub.ts'
-import { KEYS, lookup, prune, remember } from './state.ts'
+import { KEYS, type MapEntry, lookup, prune, remember } from './state.ts'
 import type { SourceContext, Trigger } from './types.ts'
 
 export const threadId = (group: string, timestamp: number) => `${group}:${timestamp}`
@@ -51,7 +51,8 @@ export async function pollSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull'
   const now = options.now ?? (() => new Date())
   const log = options.log ?? consoleLog
   const group = groupInternalId(config.groupId)
-  const page = await hub.pull(ctx.state.get<number>(KEYS.cursor), config.pollWaitSeconds, config.pollLimit, signal)
+  const after = ctx.state.get<number>(KEYS.cursor)
+  const page = await hub.pull(after, config.pollWaitSeconds, config.pollLimit, signal)
   if (page.reset) {
     counts.reset = now().toISOString()
     log.warn(`hub log was reset; replaying from its oldest message (next ${page.next})`)
@@ -64,7 +65,7 @@ export async function pollSignal(ctx: SourceContext, hub: Pick<HubClient, 'pull'
     await take(ctx, message, group, counts, log, now())
     ctx.state.set(KEYS.cursor, message.seq)
   }
-  ctx.state.set(KEYS.cursor, page.next)
+  if (page.reset || after === undefined || page.next >= after) ctx.state.set(KEYS.cursor, page.next)
   prune(ctx, now())
 }
 
@@ -86,12 +87,14 @@ async function take(ctx: SourceContext, message: HubMessage, group: string | und
     log.info(`ignored an edit of an unknown message (${where}, edit of ${message.editOf})`)
     return
   }
-  remember(ctx, message.timestamp, { thread: thread.id, ...thread.ticketId ? { ticketId: thread.ticketId } : {}, at: now.toISOString() })
+  if (!thread.mapped) remember(ctx, message.timestamp, { thread: thread.id, ...thread.ticketId ? { ticketId: thread.ticketId } : {}, at: now.toISOString() })
   await ctx.receive(triggerOf(message, actor, thread.id, group))
   counts.taken++
 }
 
-function route(ctx: SourceContext, message: HubMessage, group: string, now: Date): { id: string; ticketId?: string } | undefined {
+function route(ctx: SourceContext, message: HubMessage, group: string, now: Date): { id: string; ticketId?: string; mapped?: true } | undefined {
+  const own = ctx.state.get<MapEntry>(KEYS.map(message.timestamp))
+  if (own) return { id: own.thread, ticketId: own.ticketId, mapped: true }
   if (message.kind === 'edit') {
     const entry = lookup(ctx, message.editOf, now)
     return entry && { id: entry.thread, ticketId: entry.ticketId }
