@@ -60,11 +60,13 @@ A failed pull, including a config read that throws, waits 5 seconds. A 401 makes
 
 **Notices** run every 5 seconds while the config is complete (`noticeRound`):
 
-1. With `notifyTickets`, read every ticket changed since the ticket cursor through `tickets.changed`, page by page:
-   - post a question, block or failure at once, once per transition;
-   - add a ticket whose stage first shows a worker on it (any stage but `working`/`queued` and `ended`) to the current batch as started, and a ticket that ended as ended;
+1. Read every ticket changed since the ticket cursor through `tickets.changed`, page by page, whatever the switches:
+   - with `notifyTickets`, post a question, block or failure at once, once per transition;
+   - with `notifyProgress`, add a ticket whose stage first shows a worker on it (any stage but `working`/`queued` and `ended`) to the current batch as started, and a ticket that ended as ended;
    - store the batch, then the cursor, after each page.
-2. With `notifyTickets`, settle the batch: post the start message once no ticket started for `batchSettleSeconds`, or once its first pending start is five times that old; post the summary of the ends no partial summary reported, and drop the batch, once every ticket ended and none ended for `batchSettleSeconds`; post a partial summary when an unreported end is `batchMaxHours` old while tickets still run. An open ticket `tickets.get` no longer finds leaves the batch first; an ended one stays until a summary carries it. A ticket seen open again after it ended (a person resumed it) loses its end and counts as running; its next end replaces the old one.
+
+   With `notifyProgress` off, the Source keeps no batch: it drops a stored one without posting it, and records in `signal-progress-off` how far it read. Once `notifyProgress` is on again, changes up to that point join no batch, so nothing read meanwhile is replayed. A ticket that ended meanwhile and has a notice record gets its end recorded there, so the prune can drop the record.
+2. With `notifyProgress`, settle the batch: post the start message once no ticket started for `batchSettleSeconds`, or once its first pending start is five times that old; post the summary of the ends no partial summary reported, and drop the batch, once every ticket ended and none ended for `batchSettleSeconds`; post a partial summary when an unreported end is `batchMaxHours` old while tickets still run. An open ticket `tickets.get` no longer finds leaves the batch first; an ended one stays until a summary carries it. A ticket seen open again after it ended (a person resumed it) loses its end and counts as running; its next end replaces the old one.
 3. With `notifyHealth`, read `health()` and post an entry's failure once it stayed `error` for `healthGraceSeconds`, and its recovery.
 
 An exception in a notice round is logged by its name only and the loop goes on; it never stops intake.
@@ -96,6 +98,7 @@ All keys live in the Source's state.
 | `signal-notified:<ticket id>` | `{ keys: string[], ended?: string }`: the last 20 transitions announced, and the end a summary covered | notices |
 | `signal-batch` | `{ id, tickets: [{ id, origin, title, issue?, parent?, epic?, started?, announced?, ended?: { at, seen, outcome, pull? }, reported? }], lastStart?, lastEnd? }`: the current batch | notices |
 | `signal-ticket-cursor` | `{ at: string, id: string }`: where `tickets.changed` reads on | notices |
+| `signal-progress-off` | string: the ticket cursor time read while `notifyProgress` was off; removed once digests read past it | notices |
 | `signal-health:<entry>` | `{ state: 'error', since: string, notified: boolean }` or `{ state: 'ok' }` | notices |
 | `signal-pruned` | string: time of the last prune | intake |
 

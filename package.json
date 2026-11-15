@@ -1,7 +1,7 @@
 {
   "name": "dsh-superagent-signal",
   "description": "Signal Source for dsh-superagent: the owner's messages in one Signal group become Triggers, through the signal hub.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

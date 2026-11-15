@@ -44,32 +44,48 @@ export function noticeText(kind: NoticeKind, ticket: Ticket, origin: string): st
 export function noticeRound(ctx: SourceContext, config: SignalConfig, now: Date, counts: NoticeCounts): void {
   const group = groupInternalId(config.groupId)
   if (group === undefined) return
-  if (config.notifyTickets && ctx.tickets.changed && ticketRound(ctx, ctx.tickets.changed, group, now, counts)) counts.posted += flushBatch(ctx, config, group, now)
+  if (ctx.tickets.changed && ticketRound(ctx, ctx.tickets.changed, config, group, now, counts) && config.notifyProgress) counts.posted += flushBatch(ctx, config, group, now)
   if (config.notifyHealth && ctx.health) healthRound(ctx, ctx.health(), group, config.healthGraceSeconds, now, counts)
 }
 
 type Changed = NonNullable<SourceContext['tickets']['changed']>
 
-function ticketRound(ctx: SourceContext, changed: Changed, group: string, now: Date, counts: NoticeCounts): boolean {
+function ticketRound(ctx: SourceContext, changed: Changed, config: SignalConfig, group: string, now: Date, counts: NoticeCounts): boolean {
   const stored = ctx.state.get<TicketCursor>(KEYS.ticketCursor)
   if (!stored) {
     ctx.state.set<TicketCursor>(KEYS.ticketCursor, { at: now.toISOString(), id: '' })
     return false
   }
-  let batch: Batch | undefined = loadBatch(ctx)
+  const offUntil = ctx.state.get<string>(KEYS.progressOff)
+  let batch: Batch | undefined
+  if (config.notifyProgress) batch = loadBatch(ctx)
+  else if (ctx.state.get(KEYS.batch) !== undefined) ctx.state.set(KEYS.batch, undefined)
   // Re-read the whole last millisecond: a ticket with a smaller id may have been written there after the last read.
   let cursor: TicketCursor = { at: stored.at, id: '' }
   for (;;) {
     const page = changed(cursor, PAGE)
     for (const change of page.items) {
-      announce(ctx, change, group, counts)
-      batch = observe(ctx, batch, change, now)
+      if (config.notifyTickets) announce(ctx, change, group, counts)
+      // Changes up to offUntil were read with digests off and must not start a batch.
+      if (!config.notifyProgress) markEnded(ctx, change)
+      else if (!(offUntil !== undefined && change.ticket.updatedAt <= offUntil)) batch = observe(ctx, batch, change, now)
     }
     if (batch) ctx.state.set(KEYS.batch, batch)
     cursor = page.next
     ctx.state.set(KEYS.ticketCursor, cursor)
-    if (page.items.length < PAGE) return true
+    if (page.items.length < PAGE) {
+      const until = config.notifyProgress ? (offUntil !== undefined && cursor.at > offUntil ? undefined : offUntil) : cursor.at
+      if (until !== offUntil) ctx.state.set(KEYS.progressOff, until)
+      return true
+    }
   }
+}
+
+// Without digests no summary records the end, which prune needs to drop the record.
+function markEnded(ctx: SourceContext, { ticket, stage }: TicketChange): void {
+  if (stage.stage !== 'ended' || !ticket.ended) return
+  const record = ctx.state.get<NotifiedRecord>(KEYS.notified(ticket.id))
+  if (record && record.ended !== ticket.ended.at) ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { ...record, ended: ticket.ended.at })
 }
 
 function announce(ctx: SourceContext, change: TicketChange, group: string, counts: NoticeCounts): void {
