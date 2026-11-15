@@ -75,12 +75,13 @@ managed:
 | `groupId` | string | `""` | The group: its internal id (base64 of 32 bytes) or `group.<base64>`. Stored as given, compared as the internal id. |
 | `pollWaitSeconds` | integer, 0–60 | `30` | The hub's long-poll `wait`. Advanced. |
 | `pollLimit` | integer, 1–500 | `100` | Messages per pull. Advanced. |
-| `notifyTickets` | boolean | `true` | Start, stuck and summary messages about tickets. Advanced. |
+| `notifyTickets` | boolean | `true` | A notice when a ticket needs a person: a question, a block or a failure. Advanced. |
+| `notifyProgress` | boolean | `false` | The batched start and summary messages about tickets. Advanced. |
 | `notifyHealth` | boolean | `true` | Notices when a dependency fails or recovers. Advanced. |
 | `healthGraceSeconds` | integer, 0–3600 | `60` | How long an entry must stay `error` before its notice. Advanced. |
 | `attachmentMaxBytes` | integer, 0–26214400 | `10485760` | Larger inbound attachments are listed, not fetched. Advanced. |
-| `batchSettleSeconds` | integer, 0–3600 | `120` | How long no ticket may start, or end, before the start message, or the summary. Advanced. |
-| `batchMaxHours` | integer, 1–48 | `4` | How long an ended ticket waits for its summary while others still run. Advanced. |
+| `batchSettleSeconds` | integer, 0–3600 | `120` | With `notifyProgress`: how long no ticket may start, or end, before the start message, or the summary. Advanced. |
+| `batchMaxHours` | integer, 1–48 | `4` | With `notifyProgress`: how long an ended ticket waits for its summary while others still run. Advanced. |
 
 [Configuration](docs/configuration.md) explains each key in full.
 
@@ -110,7 +111,9 @@ Attachments are listed in the Trigger text, one line each, such as `[attachment 
 
 ## Notices
 
-With `notifyTickets`, the Source watches every ticket in dsh-superagent, whatever Source it started from. Signal is for special cases: tickets that start or finish together get one message, not one each.
+The Source watches every ticket in dsh-superagent, whatever Source it started from. `notifyTickets` posts the question, block and failure notices; `notifyProgress`, off by default, adds the start and summary messages, so that by default the group only hears about tickets that need a person. Tickets that start or finish together get one message, not one each.
+
+While `notifyProgress` is off, the Source keeps no batch and drops one stored earlier without posting it; it keeps reading changes, so turning it on later starts from then and replays nothing.
 
 | Change | Message | When |
 | --- | --- | --- |
