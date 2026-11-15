@@ -85,7 +85,7 @@ managed:
 
 [Configuration](docs/configuration.md) explains each key in full.
 
-Unknown keys are rejected. The Source stays `paused` while `hubUrl`, `tokenFile` or `groupId` is empty, or `groupId` is not a valid group id.
+Unknown keys are rejected. Once the panel saves the Signal settings, they contain `notifyProgress`: a plugin version without that key rejects them and runs the Source on its defaults, so roll back only with that in mind. The Source stays `paused` while `hubUrl`, `tokenFile` or `groupId` is empty, or `groupId` is not a valid group id.
 
 ### Policy
 
