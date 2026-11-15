@@ -35,7 +35,9 @@ flowchart LR
 | `src/watch.ts` | `watchSignal`: the two loops and the `signal` health entry. |
 | `src/intake.ts` | `pollSignal`: one pull, routing to threads, Trigger building. |
 | `src/channel.ts` | `sendSignal`: dsh-superagent's messages to the hub, recorded so a retry does not post again. |
-| `src/notices.ts` | `noticeRound`: ticket and health notices. |
+| `src/notices.ts` | `noticeRound`: stuck ticket notices, health notices, and the batch round. |
+| `src/batch.ts` | The current batch of tickets: who started and ended, and the start and summary messages. |
+| `src/labels.ts` | Origin labels, quoted titles, outcome words and pull request links. |
 | `src/attachments.ts` | Attachment lines in Trigger text and image reading for assessments. |
 | `src/state.ts` | State keys, the map and its pruning. |
 | `src/types.ts` | The parts of dsh-superagent's Source interface the plugin uses, written out structurally. |
@@ -58,12 +60,16 @@ A failed pull, including a config read that throws, waits 5 seconds. A 401 makes
 
 **Notices** run every 5 seconds while the config is complete (`noticeRound`):
 
-1. With `notifyTickets`, read every ticket changed since the ticket cursor through `tickets.changed`, page by page, and post one notice per new transition.
-2. With `notifyHealth`, read `health()` and post an entry's failure once it stayed `error` for `healthGraceSeconds`, and its recovery.
+1. With `notifyTickets`, read every ticket changed since the ticket cursor through `tickets.changed`, page by page:
+   - post a question, block or failure at once, once per transition;
+   - add a ticket whose stage first shows a worker on it (any stage but `working`/`queued` and `ended`) to the current batch as started, and a ticket that ended as ended;
+   - store the batch, then the cursor, after each page.
+2. With `notifyTickets`, settle the batch: post the start message once no ticket started for `batchSettleSeconds`, or once its first pending start is five times that old; post the summary of the ends no partial summary reported, and drop the batch, once every ticket ended and none ended for `batchSettleSeconds`; post a partial summary when an unreported end is `batchMaxHours` old while tickets still run. An open ticket `tickets.get` no longer finds leaves the batch first; an ended one stays until a summary carries it. A ticket seen open again after it ended (a person resumed it) loses its end and counts as running; its next end replaces the old one.
+3. With `notifyHealth`, read `health()` and post an entry's failure once it stayed `error` for `healthGraceSeconds`, and its recovery.
 
 An exception in a notice round is logged by its name only and the loop goes on; it never stops intake.
 
-The ticket cursor survives restarts. After a long dsh outage the chat may get a burst of notices for what happened meanwhile. The first round ever only stores the cursor at now.
+The ticket cursor and the batch survive restarts. A start or summary message's id is `signal:batch:<batch id>:start:<hash>` or `signal:batch:<batch id>:summary:<hash>`, where the batch id is when the batch began and the hash is the first 12 hex digits of the SHA-256 of the message text (for a summary, followed by the sorted `<ticket id>:<end time>` of the ends it lists, so a replaced end with the same wording still gets a new id). A crash between posting and storing the batch posts the same content under the same id, and dsh-superagent's outbox drops the repeat; content that changed meanwhile gets a new id and goes out. After a long dsh outage the next start or summary covers what happened meanwhile. The first round ever only stores the cursor at now.
 
 ## Threads and the map
 
@@ -74,7 +80,7 @@ Every message the Source takes in or sends is mapped from its Signal timestamp t
 
 Either way a quote's Trigger text ends with `> quoted: <quoted text>`.
 
-dsh-superagent's replies, including those sent before a ticket exists, and its ticket notices are mapped when sent: to their thread, and to their ticket when they have one. Health notices are not mapped. A notice about a ticket from another Source lives on the thread `<group>:ticket:<ticket id>`. When the owner quotes it, the Source adds that thread to the ticket with `tickets.attachThread` before handing the Trigger in, so the answer reaches the ticket.
+dsh-superagent's replies, including those sent before a ticket exists, and its ticket notices are mapped when sent: to their thread, and to their ticket when they have one. Health notices and the batch's start and summary messages are not mapped. A notice about a ticket from another Source lives on the thread `<group>:ticket:<ticket id>`. When the owner quotes it, the Source adds that thread to the ticket with `tickets.attachThread` before handing the Trigger in, so the answer reaches the ticket.
 
 The map horizon is 14 days, the hub's retention. Times the Source stores and compares are the hub's `receivedAt` or the local clock, never the sender's Signal timestamp, which serves only as an identifier. At most once an hour, a pull prunes map and send records older than the horizon, and notice records of tickets that are gone or ended more than 14 days ago. An open ticket keeps its record however long it waits.
 
@@ -87,7 +93,8 @@ All keys live in the Source's state.
 | `signal-cursor` | number: the hub `seq` to pull after | intake |
 | `signal-map:<timestamp>` | `{ thread: string, ticketId?: string, at: string }` | intake, Channel |
 | `signal-sent:<message id>` | `{ timestamps: number[], at: string }`: the Signal timestamps a dsh-superagent message was posted under | Channel |
-| `signal-notified:<ticket id>` | `{ keys: string[], ended?: string }`: the last 20 transitions announced | notices |
+| `signal-notified:<ticket id>` | `{ keys: string[], ended?: string }`: the last 20 transitions announced, and the end a summary covered | notices |
+| `signal-batch` | `{ id, tickets: [{ id, origin, title, issue?, parent?, epic?, started?, announced?, ended?: { at, seen, outcome, pull? }, reported? }], lastStart?, lastEnd? }`: the current batch | notices |
 | `signal-ticket-cursor` | `{ at: string, id: string }`: where `tickets.changed` reads on | notices |
 | `signal-health:<entry>` | `{ state: 'error', since: string, notified: boolean }` or `{ state: 'ok' }` | notices |
 | `signal-pruned` | string: time of the last prune | intake |

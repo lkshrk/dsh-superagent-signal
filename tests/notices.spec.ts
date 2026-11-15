@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { SignalConfigSchema } from '../src/config.ts'
 import { ticketThreadId } from '../src/intake.ts'
-import { HOST_HEALTH_ENTRIES, type NoticeCounts, noticeRound, noticeText, originLabel, transitionOf } from '../src/notices.ts'
+import { originLabel } from '../src/labels.ts'
+import { HOST_HEALTH_ENTRIES, type NoticeCounts, noticeRound, noticeText, transitionOf } from '../src/notices.ts'
 import { KEYS, type NotifiedRecord, prune } from '../src/state.ts'
 import type { Health, OutboundMessage, Ticket, TicketChange, TicketCursor, TicketStage, Trigger } from '../src/types.ts'
 import { fakeContext, internalA, restA } from './fakes.ts'
@@ -23,8 +25,9 @@ const signalTrigger = (id: string): Trigger => ({
   id, source: 'signal', threads: [], actor: { source: 'signal', id: 'owner' }, human: true, at: iso(0), text: 'x', channel: signalChannel, meta: {},
 })
 
-function setup() {
+function setup(seed?: Map<string, unknown>) {
   const ctx = fakeContext()
+  for (const [k, v] of seed ?? []) ctx.store.set(k, structuredClone(v))
   const changes: TicketChange[] = []
   const triggers = new Map<string, Trigger>()
   const threads = new Map<string, Record<string, unknown>>()
@@ -49,6 +52,7 @@ function setup() {
     const index = changes.findIndex(change => change.ticket.id === t.id)
     if (index >= 0) changes.splice(index, 1)
     changes.push({ ticket: t, stage })
+    ctx.ticketStore.set(t.id, t)
     triggers.set(trigger.id, trigger)
   }
   return { ctx, changes, triggers, threads, health, sent, reads, counts, round, put }
@@ -60,12 +64,23 @@ const blocked = { stage: 'person', action: 'blocked' } as const
 const failed = { stage: 'person', action: 'failed' } as const
 const ended = { stage: 'ended' } as const
 const report = (summary: string, when: string) => ({ report: { state: 'blocked', summary, at: when } })
+const working = { stage: 'working' } as const
+const queued = { stage: 'working', action: 'queued' } as const
+const review = { stage: 'person', action: 'review' } as const
+const linear = (id: string, identifier: string, meta: Record<string, unknown> = {}, text = 'x'): Trigger => ({ ...linearTrigger(id), text, meta: { identifier, ...meta } })
+const endOf = (outcome: NonNullable<Ticket['ended']>['outcome'], seconds: number, by: 'executor' | 'human' = 'executor') => ({ at: iso(seconds), by, outcome })
+const batchChannel = { source: 'signal', thread: `signal:${internalA}:batch`, address: { group: internalA } }
+const H = 3600
+const digest = (text: string, ends: string[]) => createHash('sha256').update([text, ...[...ends].sort()].join('\n')).digest('hex').slice(0, 12)
+const startId = (batch: string, text: string) => `signal:batch:${batch}:start:${digest(text, [])}`
+const summaryId = (batch: string, text: string, ...ends: [string, string][]) => `signal:batch:${batch}:summary:${digest(text, ends.map(([id, when]) => `${id}:${when}`))}`
+const START_12 = 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"'
 
 describe('transitionOf', () => {
   it('maps stages to notice keys', () => {
     expect(transitionOf({ ticket: ticket('T1', { attention: { id: 'a1', question: 'q' } }), stage: question })).toEqual({ key: 'attention:a1', kind: 'question' })
     expect(transitionOf({ ticket: ticket('T1', { assignments: [report('old', iso(1)), report('new', iso(5))] }), stage: blocked })).toEqual({ key: `blocked:${iso(5)}`, kind: 'blocked' })
-    expect(transitionOf({ ticket: ticket('T1', { ended: { at: iso(9), by: 'executor', outcome: 'completed' } }), stage: ended })).toEqual({ key: `ended:${iso(9)}`, kind: 'ended' })
+    expect(transitionOf({ ticket: ticket('T1', { ended: { at: iso(9), by: 'executor', outcome: 'completed' } }), stage: ended })).toBeUndefined()
     expect(transitionOf({ ticket: ticket('T1'), stage: { stage: 'working' } })).toBeUndefined()
     expect(transitionOf({ ticket: ticket('T1'), stage: { stage: 'person', action: 'review' } })).toBeUndefined()
   })
@@ -132,7 +147,7 @@ describe('ticket notices', () => {
     s.ctx.ticketStore.set('T1', touched)
     s.put(touched, question)
     s.round(at(later + 5))
-    expect(s.sent).toHaveLength(1)
+    expect(s.sent.filter(m => m.id.startsWith('signal:notice:'))).toHaveLength(1)
   })
 
   it('announces blocked and failed reports keyed by the report time', () => {
@@ -147,38 +162,6 @@ describe('ticket notices', () => {
     expect(s.sent[1]?.text).toBe('Linear ENG-12 "Fix login" failed:\nTests crash\n\nQuote this message to answer.')
   })
 
-  it('announces an end with the pull request link', () => {
-    const s = setup()
-    started(s)
-    s.threads.set('github:12', { url: 'https://github.com/o/r/pull/12' })
-    s.threads.set('github:13', { url: 'https://github.com/o/r/pull/13' })
-    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: [{ thread: 'github:13', own: false }, { thread: 'github:12', own: true }] }), ended)
-    s.round(at(5))
-    expect(s.sent).toHaveLength(1)
-    expect(s.sent[0]?.id).toBe(`signal:notice:T1:ended:${iso(4)}`)
-    expect(s.sent[0]?.text).toBe('Linear ENG-12 "Fix login" is merged: https://github.com/o/r/pull/12.\n\nQuote this message to follow up.')
-    expect(s.ctx.state.get<NotifiedRecord>(KEYS.notified('T1'))).toEqual({ keys: [`ended:${iso(4)}`], ended: iso(4) })
-  })
-
-  it('words every end', () => {
-    const s = setup()
-    started(s)
-    const outcomes = { completed: 'is done', closed: 'was closed without merging', dropped: 'was dropped: nothing to do' } as const
-    for (const [outcome, word] of Object.entries(outcomes)) {
-      s.put(ticket(outcome, { ended: { at: iso(4), by: 'executor', outcome: outcome as keyof typeof outcomes } }), ended)
-      s.round(at(5))
-      expect(s.sent.at(-1)?.text).toBe(`Linear ENG-12 "Fix login" ${word}.\n\nQuote this message to follow up.`)
-    }
-  })
-
-  it('announces a stop by a person', () => {
-    const s = setup()
-    started(s)
-    s.put(ticket('T1', { ended: { at: iso(4), by: 'human', outcome: 'stopped' } }), ended)
-    s.round(at(5))
-    expect(s.sent.map(m => [m.id, m.text])).toEqual([[`signal:notice:T1:ended:${iso(4)}`, 'Linear ENG-12 "Fix login" was stopped by a person.\n\nQuote this message to follow up.']])
-  })
-
   it('answers a Signal ticket on its own request', () => {
     const s = setup()
     started(s)
@@ -189,50 +172,15 @@ describe('ticket notices', () => {
     expect(s.sent[0]?.text).toBe('Signal request "Fix login" is blocked:\nNo access\n\nQuote this message to answer.')
   })
 
-  it('announces a question and the ends the host does not post on a Signal request', () => {
+  it('answers a question on a Signal request on that request', () => {
     const s = setup()
     started(s)
     s.put(ticket('T1', { attention: { id: 'a1', question: 'Which repo?' } }), question, signalTrigger('trigger-T1'))
-    s.put(ticket('T2', { ended: { at: iso(4), by: 'executor', outcome: 'completed' } }), ended, signalTrigger('trigger-T2'))
-    s.put(ticket('T3', { ended: { at: iso(4), by: 'human', outcome: 'stopped' } }), ended, signalTrigger('trigger-T3'))
-    s.put(ticket('T4', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: [{ thread: 'github:12', own: true }] }), ended, signalTrigger('trigger-T4'))
     s.round(at(5))
-    expect(s.sent.map(m => m.id)).toEqual(['signal:notice:T1:attention:a1', `signal:notice:T2:ended:${iso(4)}`, `signal:notice:T3:ended:${iso(4)}`, `signal:notice:T4:ended:${iso(4)}`])
-    expect(s.sent.every(m => m.channel === signalChannel)).toBe(true)
+    expect(s.sent.map(m => m.id)).toEqual(['signal:notice:T1:attention:a1'])
+    expect(s.sent[0]?.channel).toBe(signalChannel)
     expect(s.sent[0]?.text).toBe('Question on Signal request "Fix login":\nWhich repo?\n\nQuote this message to answer.')
   })
-
-  it('leaves a merged or closed end of a closed own pull request on a Signal request to the host', () => {
-    const s = setup()
-    started(s)
-    const closedPull = (outcome: 'merged' | 'closed') => [{ thread: 'github:12', own: true, closed: { at: iso(3), outcome } }]
-    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: closedPull('merged') }), ended, signalTrigger('trigger-T1'))
-    s.put(ticket('T2', { ended: { at: iso(4), by: 'executor', outcome: 'closed' }, follows: closedPull('closed') }), ended, signalTrigger('trigger-T2'))
-    s.round(at(5))
-    expect(s.sent).toEqual([])
-    s.put(ticket('T3', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows: closedPull('merged') }), ended)
-    s.round(at(6))
-    expect(s.sent.map(m => m.id)).toEqual([`signal:notice:T3:ended:${iso(4)}`])
-  })
-
-  it('leaves the end to the host when the only closed pull request is one the ticket only follows', () => {
-    const s = setup()
-    started(s)
-    const follows = [{ thread: 'github:o/r#7', own: false, closed: { at: iso(3), outcome: 'merged' as const } }]
-    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'merged' }, follows }), ended, signalTrigger('trigger-T1'))
-    s.round(at(5))
-    expect(s.sent).toEqual([])
-  })
-
-  it('announces a Signal end whose closed follow is no pull request', () => {
-    const s = setup()
-    started(s)
-    const follows = [{ thread: 'github:ci:main', own: true, closed: { at: iso(3), outcome: 'closed' as const } }, { thread: 'linear:ENG-1', own: false, closed: { at: iso(3), outcome: 'closed' as const } }]
-    s.put(ticket('T1', { ended: { at: iso(4), by: 'executor', outcome: 'closed' }, follows }), ended, signalTrigger('trigger-T1'))
-    s.round(at(5))
-    expect(s.sent.map(m => m.id)).toEqual([`signal:notice:T1:ended:${iso(4)}`])
-  })
-
   it('reads every page of changes', () => {
     const s = setup()
     started(s)
@@ -265,6 +213,387 @@ describe('ticket notices', () => {
     expect(keys).toHaveLength(20)
     expect(keys?.at(0)).toBe('attention:a5')
     expect(keys?.at(-1)).toBe('attention:a24')
+  })
+})
+
+describe('batch notices', () => {
+  const login = (overrides: Partial<Ticket> = {}) => ticket('T1', { title: 'ENG-1: Fix login', ...overrides })
+  const footer = (overrides: Partial<Ticket> = {}) => ticket('T2', { title: 'Fix footer', updatedAt: iso(60), ...overrides })
+  const eng1 = linear('trigger-T1', 'ENG-1')
+  const eng2 = linear('trigger-T2', 'ENG-2')
+  const startTwo = (s: ReturnType<typeof setup>) => {
+    started(s)
+    s.put(login(), working, eng1)
+    s.round(at(5))
+    s.put(footer(), working, eng2)
+    s.round(at(60))
+  }
+
+  it('posts one start message for tickets that start within the settle window', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(179))
+    expect(s.sent).toEqual([])
+    s.round(at(180))
+    expect(s.sent).toEqual([{ id: startId(iso(5), START_12), channel: batchChannel,
+      text: 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"', kind: 'notice' }])
+    s.round(at(400))
+    expect(s.sent).toHaveLength(1)
+    expect(s.counts.posted).toBe(1)
+  })
+
+  it('posts a second start message for a ticket that starts after the window', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(ticket('T3', { title: 'Fix header', updatedAt: iso(300) }), working, linear('trigger-T3', 'ENG-3'))
+    s.round(at(300))
+    s.round(at(420))
+    expect(s.sent.map(m => [m.id, m.text])).toEqual([
+      [startId(iso(5), START_12), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"'],
+      [startId(iso(5), 'Started: 1 ticket\nLinear ENG-3 "Fix header"'), 'Started: 1 ticket\nLinear ENG-3 "Fix header"'],
+    ])
+  })
+
+  it('counts a ticket as started once a worker is on it, not while it is queued', () => {
+    const s = setup()
+    started(s)
+    s.put(login(), queued, eng1)
+    s.round(at(5))
+    s.round(at(200))
+    expect(s.sent).toEqual([])
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+    s.put(login({ updatedAt: iso(210) }), review, eng1)
+    s.round(at(210))
+    s.round(at(330))
+    expect(s.sent.map(m => m.text)).toEqual(['Started: 1 ticket\nLinear ENG-1 "Fix login"'])
+  })
+
+  it('posts no message per ended ticket and one summary once the last one ended and the window passed', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.threads.set('github:12', { url: 'https://github.com/o/r/pull/12' })
+    s.put(login({ ended: endOf('merged', 300), follows: [{ thread: 'github:12', own: true }], updatedAt: iso(300) }), ended, eng1)
+    s.round(at(300))
+    s.put(footer({ ended: endOf('completed', 400), updatedAt: iso(400) }), ended, eng2)
+    s.round(at(400))
+    s.round(at(519))
+    expect(s.sent).toHaveLength(1)
+    s.round(at(520))
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', ['T1', iso(300)], ['T2', iso(400)]), channel: batchChannel,
+      text: 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', kind: 'notice' })
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+    s.round(at(900))
+    expect(s.sent).toHaveLength(2)
+  })
+
+  it('words every outcome and lists a ticket that ended without starting only in the summary', () => {
+    const s = setup()
+    started(s)
+    s.put(ticket('T1', { title: 'One', ended: endOf('closed', 2) }), ended, linear('trigger-T1', 'ENG-1'))
+    s.put(ticket('T2', { title: 'Two', ended: endOf('dropped', 2) }), ended, linear('trigger-T2', 'ENG-2'))
+    s.put(ticket('T3', { title: 'Three', ended: endOf('stopped', 2, 'human') }), ended, linear('trigger-T3', 'ENG-3'))
+    s.round(at(5))
+    s.round(at(125))
+    expect(s.sent.map(m => m.text)).toEqual(['Finished: 3 tickets\nLinear ENG-1 "One" was closed without merging\nLinear ENG-2 "Two" was dropped: nothing to do\nLinear ENG-3 "Three" was stopped by a person'])
+  })
+
+  it('does not summarize an ended ticket again when it changes after its batch closed', () => {
+    const s = setup()
+    started(s)
+    s.put(login({ ended: endOf('completed', 2) }), ended, eng1)
+    s.round(at(5))
+    s.round(at(125))
+    s.put(login({ ended: endOf('completed', 2), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.round(at(400))
+    expect(s.sent).toHaveLength(1)
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+  })
+
+  it('groups the sub-issues of an epic under it, with a count in the summary', () => {
+    const s = setup()
+    started(s)
+    const parentText = 'Parent: ENG-10 https://linear.app/x/issue/ENG-10\nSub-issues: ENG-11 (open)\n\nbody'
+    const sub = (id: string, identifier: string) => linear(`trigger-${id}`, identifier, { issue: `i-${identifier}`, parent: 'i-ENG-10' }, parentText)
+    s.put(ticket('T1', { title: 'ENG-11: Add form', updatedAt: iso(1) }), working, sub('T1', 'ENG-11'))
+    s.put(ticket('T2', { title: 'Fix footer', updatedAt: iso(2) }), working, linear('trigger-T2', 'ENG-20'))
+    s.put(ticket('T3', { title: 'ENG-12: Wire API', updatedAt: iso(3) }), working, sub('T3', 'ENG-12'))
+    s.round(at(5))
+    s.round(at(125))
+    expect(s.sent.map(m => m.text)).toEqual(['Started: 3 tickets\nEpic ENG-10:\n  Linear ENG-11 "Add form"\n  Linear ENG-12 "Wire API"\nLinear ENG-20 "Fix footer"'])
+    s.put(ticket('T0', { title: 'ENG-10: Login revamp', updatedAt: iso(140) }), working, linear('trigger-T0', 'ENG-10', { issue: 'i-ENG-10' }))
+    s.round(at(140))
+    s.round(at(260))
+    expect(s.sent.at(-1)?.text).toBe('Started: 1 ticket\nEpic ENG-10 "Login revamp":')
+    s.threads.set('github:11', { url: 'https://github.com/o/r/pull/11' })
+    s.put(ticket('T1', { title: 'ENG-11: Add form', ended: endOf('merged', 301), follows: [{ thread: 'github:11', own: true }], updatedAt: iso(301) }), ended, sub('T1', 'ENG-11'))
+    s.put(ticket('T2', { title: 'Fix footer', ended: endOf('merged', 302), updatedAt: iso(302) }), ended, linear('trigger-T2', 'ENG-20'))
+    s.put(ticket('T3', { title: 'ENG-12: Wire API', ended: endOf('closed', 303), updatedAt: iso(303) }), ended, sub('T3', 'ENG-12'))
+    s.put(ticket('T0', { title: 'ENG-10: Login revamp', ended: endOf('completed', 304), updatedAt: iso(304) }), ended, linear('trigger-T0', 'ENG-10', { issue: 'i-ENG-10' }))
+    s.round(at(310))
+    s.round(at(430))
+    expect(s.sent.at(-1)?.text).toBe([
+      'Finished: 4 tickets',
+      'Epic ENG-10 "Login revamp" is done, 1 of 2 sub-issues merged',
+      '  Linear ENG-11 "Add form" is merged: https://github.com/o/r/pull/11',
+      '  Linear ENG-12 "Wire API" was closed without merging',
+      'Linear ENG-20 "Fix footer" is merged',
+    ].join('\n'))
+  })
+
+  it('still posts a question, block or failure at once, per ticket, while the ticket is in a batch', () => {
+    const s = setup()
+    startTwo(s)
+    s.put(login({ attention: { id: 'a1', question: 'Which repo?' }, updatedAt: iso(70) }), question, eng1)
+    s.put(footer({ assignments: [report('No access', iso(71))], updatedAt: iso(71) }), blocked, eng2)
+    s.round(at(75))
+    expect(s.sent.map(m => [m.id, m.channel.thread])).toEqual([
+      ['signal:notice:T1:attention:a1', `signal:${internalA}:ticket:T1`],
+      [`signal:notice:T2:blocked:${iso(71)}`, `signal:${internalA}:ticket:T2`],
+    ])
+    s.put(login({ assignments: [report('Tests crash', iso(80))], updatedAt: iso(80) }), failed, eng1)
+    s.round(at(80))
+    expect(s.sent.at(-1)?.id).toBe(`signal:notice:T1:failed:${iso(80)}`)
+    s.round(at(180))
+    expect(s.sent.at(-1)?.id).toBe(startId(iso(5), START_12))
+  })
+
+  it('sends a partial summary after batchMaxHours while tickets still run, and the batch goes on', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.round(at(200 + 4 * H - 1))
+    expect(s.sent).toHaveLength(1)
+    s.round(at(200 + 4 * H))
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done', ['T1', iso(200)]), channel: batchChannel,
+      text: '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
+    s.round(at(200 + 9 * H))
+    expect(s.sent).toHaveLength(2)
+    s.put(footer({ ended: endOf('completed', 10 * H), updatedAt: iso(10 * H) }), ended, eng2)
+    s.round(at(10 * H))
+    s.round(at(10 * H + 120))
+    expect(s.sent.at(-1)?.id).toBe(summaryId(iso(5), 'Finished: 2 tickets (1 reported earlier)\nLinear ENG-2 "Fix footer" is done', ['T2', iso(10 * H)]))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets (1 reported earlier)\nLinear ENG-2 "Fix footer" is done')
+  })
+
+  it('posts no ended notice for a Signal request but lists it in the start and summary messages', () => {
+    const s = setup()
+    started(s)
+    s.put(ticket('T1'), working, signalTrigger('trigger-T1'))
+    s.round(at(5))
+    s.round(at(125))
+    s.put(ticket('T1', { ended: endOf('merged', 200), follows: [{ thread: 'github:12', own: true, closed: { at: iso(199), outcome: 'merged' } }], updatedAt: iso(200) }), ended, signalTrigger('trigger-T1'))
+    s.round(at(200))
+    expect(s.sent).toHaveLength(1)
+    s.round(at(320))
+    expect(s.sent.map(m => [m.text, m.channel])).toEqual([
+      ['Started: 1 ticket\nSignal request "Fix login"', batchChannel],
+      ['Finished: 1 ticket\nSignal request "Fix login" is merged', batchChannel],
+    ])
+  })
+
+  it('reuses the message id after a crash between notify and the state write, so the outbox drops the repeat', () => {
+    const s = setup()
+    startTwo(s)
+    const outbox = new Map<string, OutboundMessage>()
+    s.ctx.notify = message => { s.sent.push(message); if (!outbox.has(message.id)) outbox.set(message.id, message) }
+    const crashed = (now: Date) => {
+      const before = structuredClone(s.ctx.store)
+      s.round(now)
+      s.ctx.store.clear()
+      for (const [k, v] of before) s.ctx.store.set(k, v)
+      s.round(now)
+    }
+    crashed(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.put(footer({ ended: endOf('completed', 201), updatedAt: iso(201) }), ended, eng2)
+    s.round(at(201))
+    crashed(at(321))
+    const start = startId(iso(5), START_12)
+    const summary = summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done', ['T1', iso(200)], ['T2', iso(201)])
+    expect(s.sent.map(m => m.id)).toEqual([start, start, summary, summary])
+    expect(s.sent[0]?.text).toBe(s.sent[1]?.text)
+    expect(s.sent[2]?.text).toBe(s.sent[3]?.text)
+    expect([...outbox.keys()]).toEqual([start, summary])
+  })
+
+  it('gives a replay with different content a new id, so the outbox does not drop it', () => {
+    const s = setup()
+    startTwo(s)
+    const outbox = new Map<string, OutboundMessage>()
+    s.ctx.notify = message => { s.sent.push(message); if (!outbox.has(message.id)) outbox.set(message.id, message) }
+    const before = structuredClone(s.ctx.store)
+    s.round(at(180))
+    s.ctx.store.clear()
+    for (const [k, v] of before) s.ctx.store.set(k, v)
+    s.put(ticket('T3', { title: 'Fix header', updatedAt: iso(170) }), working, linear('trigger-T3', 'ENG-3'))
+    s.round(at(180))
+    s.round(at(300))
+    expect(s.sent.map(m => m.id)).toEqual([startId(iso(5), START_12), startId(iso(5), 'Started: 3 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"\nLinear ENG-3 "Fix header"')])
+    expect([...outbox.values()].map(m => m.text)).toEqual(['Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"',
+      'Started: 3 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"\nLinear ENG-3 "Fix header"'])
+  })
+
+  it('continues the batch after a restart', () => {
+    const first = setup()
+    started(first)
+    first.put(login(), working, eng1)
+    first.round(at(5))
+    const s = setup(first.ctx.store)
+    s.put(login(), working, eng1)
+    s.put(footer(), working, eng2)
+    s.round(at(60))
+    s.round(at(180))
+    expect(s.sent.map(m => [m.id, m.text])).toEqual([[startId(iso(5), START_12), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"']])
+  })
+
+  it('reports the final outcome once when a ticket resumes and ends again within the open batch', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('closed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.put(login({ updatedAt: iso(250) }), queued, eng1)
+    s.round(at(250))
+    s.put(footer({ ended: endOf('completed', 260), updatedAt: iso(260) }), ended, eng2)
+    s.round(at(260))
+    s.round(at(600))
+    expect(s.sent).toHaveLength(1)
+    s.threads.set('github:12', { url: 'https://github.com/o/r/pull/12' })
+    s.put(login({ ended: endOf('merged', 700), follows: [{ thread: 'github:12', own: true }], updatedAt: iso(700) }), ended, eng1)
+    s.round(at(700))
+    s.round(at(820))
+    expect(s.sent.slice(1).map(m => [m.id, m.text])).toEqual([[summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', ['T1', iso(700)], ['T2', iso(260)]),
+      'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done']])
+    s.round(at(2000))
+    expect(s.sent).toHaveLength(2)
+  })
+
+  it('holds back a ticket resumed after its summary until it ends again', () => {
+    const s = setup()
+    started(s)
+    s.put(login(), working, eng1)
+    s.round(at(5))
+    s.put(login({ ended: endOf('closed', 10), updatedAt: iso(10) }), ended, eng1)
+    s.round(at(10))
+    s.round(at(130))
+    expect(s.sent.map(m => m.text)).toEqual(['Finished: 1 ticket\nLinear ENG-1 "Fix login" was closed without merging'])
+    s.put(login({ updatedAt: iso(200) }), queued, eng1)
+    s.round(at(200))
+    s.put(login({ updatedAt: iso(210) }), working, eng1)
+    s.round(at(210))
+    s.round(at(330))
+    s.round(at(5 * H))
+    expect(s.sent.map(m => m.text)).toEqual(['Finished: 1 ticket\nLinear ENG-1 "Fix login" was closed without merging', 'Started: 1 ticket\nLinear ENG-1 "Fix login"'])
+    s.put(login({ ended: endOf('completed', 6 * H), updatedAt: iso(6 * H) }), ended, eng1)
+    s.round(at(6 * H))
+    s.round(at(6 * H + 120))
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(210), 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', ['T1', iso(6 * H)]), channel: batchChannel,
+      text: 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
+  })
+
+  it('drops a ticket that no longer exists, so it cannot hold the batch open', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.ctx.ticketStore.delete('T2')
+    s.round(at(320))
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', ['T1', iso(200)]), channel: batchChannel,
+      text: 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+  })
+
+  it('keeps an ended ticket that vanishes before its summary, and still reports it', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.put(footer({ ended: endOf('merged', 201), updatedAt: iso(201) }), ended, eng2)
+    s.round(at(201))
+    s.ctx.ticketStore.delete('T1')
+    s.ctx.ticketStore.delete('T2')
+    s.round(at(321))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is merged')
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+  })
+
+  it('reports a replaced end in the next partial summary, even when the text is the same', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.round(at(200 + 4 * H))
+    expect(s.sent).toHaveLength(2)
+    s.put(login({ ended: endOf('completed', 5 * H), updatedAt: iso(5 * H) }), ended, eng1)
+    s.round(at(5 * H))
+    s.round(at(9 * H))
+    const text = '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done'
+    expect(s.sent.slice(1).map(m => [m.id, m.text])).toEqual([
+      [summaryId(iso(5), text, ['T1', iso(200)]), text],
+      [summaryId(iso(5), text, ['T1', iso(5 * H)]), text],
+    ])
+  })
+
+  it('gives different text a different id and the same text the same id', () => {
+    const s = setup()
+    started(s)
+    const sub = (id: string, identifier: string) => linear(`trigger-${id}`, identifier, { issue: `i-${identifier}`, parent: 'i-ENG-10' }, 'Parent: ENG-10 https://linear.app/x\n\nx')
+    s.put(ticket('T1', { title: 'One' }), working, sub('T1', 'ENG-11'))
+    s.round(at(5))
+    s.round(at(125))
+    s.put(ticket('T0', { title: 'Epic', updatedAt: iso(130) }), working, linear('trigger-T0', 'ENG-10', { issue: 'i-ENG-10' }))
+    s.round(at(130))
+    s.round(at(250))
+    expect(s.sent.map(m => m.text)).toEqual(['Started: 1 ticket\nEpic ENG-10:\n  Linear ENG-11 "One"', 'Started: 1 ticket\nEpic ENG-10 "Epic":'])
+    expect(s.sent.map(m => m.id)).toEqual(s.sent.map(m => startId(iso(5), m.text)))
+  })
+
+  it('lists only the tickets earlier partial summaries did not report in the final summary', () => {
+    const s = setup()
+    started(s)
+    for (const [id, n] of [['T1', 1], ['T2', 2], ['T3', 3]] as const) s.put(ticket(id, { title: `Task ${n}`, updatedAt: iso(n) }), working, linear(`trigger-${id}`, `ENG-${n}`))
+    s.round(at(5))
+    s.round(at(125))
+    s.put(ticket('T1', { title: 'Task 1', ended: endOf('completed', 200), updatedAt: iso(200) }), ended, linear('trigger-T1', 'ENG-1'))
+    s.put(ticket('T2', { title: 'Task 2', ended: endOf('merged', 201), updatedAt: iso(201) }), ended, linear('trigger-T2', 'ENG-2'))
+    s.round(at(201))
+    s.round(at(201 + 4 * H))
+    expect(s.sent.at(-1)?.text).toBe('2 of 3 done, still running: Linear ENG-3 "Task 3"\nLinear ENG-1 "Task 1" is done\nLinear ENG-2 "Task 2" is merged')
+    s.put(ticket('T3', { title: 'Task 3', ended: endOf('closed', 5 * H), updatedAt: iso(5 * H) }), ended, linear('trigger-T3', 'ENG-3'))
+    s.round(at(5 * H))
+    s.round(at(5 * H + 120))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 3 tickets (2 reported earlier)\nLinear ENG-3 "Task 3" was closed without merging')
+  })
+
+  it('posts the start message at the latest five settle windows after the first pending start', () => {
+    const s = setup()
+    started(s)
+    for (let i = 0; i < 12; i++) {
+      s.put(ticket(`T${i}`, { title: `Task ${i}`, updatedAt: iso(5 + i * 60) }), working, linear(`trigger-T${i}`, `ENG-${i}`))
+      s.round(at(5 + i * 60))
+    }
+    expect(s.sent.map(m => m.text.split('\n')[0])).toEqual(['Started: 11 tickets'])
+    expect(s.sent[0]?.text.split('\n').at(-1)).toBe('Linear ENG-10 "Task 10"')
+    s.round(at(5 + 11 * 60 + 119))
+    expect(s.sent).toHaveLength(1)
+    s.round(at(5 + 11 * 60 + 120))
+    expect(s.sent.map(m => m.text)).toEqual([expect.stringMatching(/^Started: 11 tickets/), 'Started: 1 ticket\nLinear ENG-11 "Task 11"'])
+  })
+
+  it('stores one batch record', () => {
+    const s = setup()
+    startTwo(s)
+    expect(s.ctx.state.get(KEYS.batch)).toEqual({ id: iso(5), lastStart: iso(60), tickets: [
+      { id: 'T1', origin: 'Linear ENG-1', title: 'ENG-1: Fix login', started: iso(5) },
+      { id: 'T2', origin: 'Linear ENG-2', title: 'Fix footer', started: iso(60) },
+    ] })
   })
 })
 
@@ -369,6 +698,20 @@ describe('switches and old hosts', () => {
     expect(s.reads).toEqual([])
     expect(s.ctx.state.get(KEYS.ticketCursor)).toBeUndefined()
     expect(s.ctx.state.get(KEYS.health('github'))).toBeUndefined()
+  })
+
+  it('posts no start, stuck or summary message while notifyTickets is off', () => {
+    const s = setup()
+    const off = SignalConfigSchema.parse({ ...config, notifyTickets: false })
+    s.round(T0)
+    s.put(ticket('T1'), working)
+    s.round(at(5))
+    s.put(ticket('T1', { attention: { id: 'a1', question: 'q' }, updatedAt: iso(10) }), question)
+    s.round(at(200), off)
+    s.put(ticket('T1', { ended: endOf('completed', 300), updatedAt: iso(300) }), ended)
+    s.round(at(300), off)
+    s.round(at(900), off)
+    expect(s.sent).toEqual([])
   })
 
   it('skips what the host does not offer', () => {
