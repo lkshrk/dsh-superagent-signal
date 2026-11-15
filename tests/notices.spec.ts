@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SignalConfigSchema } from '../src/config.ts'
 import { ticketThreadId } from '../src/intake.ts'
-import { HOST_HEALTH_ENTRIES, type NoticeCounts, noticeRound, originLabel, transitionOf } from '../src/notices.ts'
+import { HOST_HEALTH_ENTRIES, type NoticeCounts, noticeRound, noticeText, originLabel, transitionOf } from '../src/notices.ts'
 import { KEYS, type NotifiedRecord, prune } from '../src/state.ts'
 import type { Health, OutboundMessage, Ticket, TicketChange, TicketCursor, TicketStage, Trigger } from '../src/types.ts'
 import { fakeContext, internalA, restA } from './fakes.ts'
@@ -76,6 +76,18 @@ describe('transitionOf', () => {
     expect(originLabel(signalTrigger('x'))).toBe('Signal request')
     expect(originLabel({ ...linearTrigger('x'), source: 'feishu' })).toBe('Feishu')
     expect(originLabel({ ...linearTrigger('x'), source: 'jira' })).toBe('jira')
+  })
+})
+
+describe('notice title', () => {
+  it('drops the identifier prefix the origin label already carries', () => {
+    const text = noticeText('question', ticket('T1', { title: 'XXX-429: Change the footer text', attention: { id: 'a1', question: 'Which?' } }), 'Linear XXX-429')
+    expect(text.startsWith('Question on Linear XXX-429 "Change the footer text":')).toBe(true)
+  })
+
+  it('leaves a title without the prefix unchanged', () => {
+    expect(noticeText('failed', ticket('T1', { title: 'Change the footer text' }), 'Linear XXX-429')).toContain('Linear XXX-429 "Change the footer text" failed')
+    expect(noticeText('failed', ticket('T1', { title: 'XXX-4290: other' }), 'Linear XXX-429')).toContain('"XXX-4290: other"')
   })
 })
 
