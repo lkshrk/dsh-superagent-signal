@@ -139,8 +139,12 @@ Epic ENG-10 "Login revamp": 2 of 2 sub-issues merged
 Linear ENG-20 "Fix footer" was closed without merging
 ```
 
-- The sub-issues of a Linear epic are listed under it. The count covers the sub-issues in the batch, not every sub-issue in Linear. The epic's title shows when the epic is a ticket of the batch too.
+- The sub-issues of a Linear epic are listed under it. The count covers the sub-issues in the batch, not every sub-issue in Linear. When the epic is a ticket of the batch too, its title shows on the group's line, and in the summary its own outcome: `Epic ENG-10 "Login revamp" is done, 2 of 2 sub-issues merged`.
 - A ticket that ends without a worker ever starting on it, such as one dropped at assessment, shows only in the summary.
+- A question, block or failure inside the settle window arrives before the start message that lists its ticket.
+- The final summary waits for every ticket of the batch. One ticket that stays open, such as one waiting on review, holds it back; meanwhile a partial summary of the tickets that ended goes out every `batchMaxHours`.
+- A ticket a person resumes after it ended counts as running again. Its later end replaces the earlier one in the summary. Resumed after its summary went out, it starts a new batch with its own start message and summary.
+- A ticket that no longer exists in dsh-superagent leaves the batch.
 - Start and summary messages go to the group without a quote. Quoting one starts a new request.
 - A question, block or failure of a ticket that started in Signal is a reply to the request that started it. A ticket from another Source gets it in the group without a quote; quote it to answer, and the answer goes to that ticket.
 - No message announces a single ticket's end. A Signal request still gets dsh-superagent's own reply on it.
