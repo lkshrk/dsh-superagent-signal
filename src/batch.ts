@@ -53,6 +53,7 @@ export function observe(ctx: SourceContext, batch: Batch | undefined, change: Ti
     const pull = pullOf(ctx, ticket)
     entry.title = ticket.title
     entry.ended = { at: end.at, seen, outcome: end.outcome, ...pull ? { pull } : {} }
+    delete entry.reported
     batch.lastEnd = seen
   } else {
     entry.started = seen
@@ -108,14 +109,16 @@ export function summaryText(batch: Batch, listed: BatchTicket[], running: BatchT
   return [head, ...grouped(batch, listed, outcomeLine, header)].join('\n')
 }
 
-function digest(parts: string[]): string {
-  return createHash('sha256').update([...parts].sort().join('\n')).digest('hex').slice(0, 12)
+// End times join the text so a replaced end with the same wording still gets a new id.
+function digest(text: string, listed: BatchTicket[]): string {
+  const ends = listed.flatMap(t => t.ended ? [`${t.id}:${t.ended.at}`] : []).sort()
+  return createHash('sha256').update([text, ...ends].join('\n')).digest('hex').slice(0, 12)
 }
 
 export function flushBatch(ctx: SourceContext, config: SignalConfig, group: string, now: Date): number {
   const batch = loadBatch(ctx)
   if (!batch) return 0
-  const kept = batch.tickets.filter(t => ctx.tickets.get(t.id))
+  const kept = batch.tickets.filter(t => t.ended || ctx.tickets.get(t.id))
   if (kept.length < batch.tickets.length) {
     batch.tickets = kept
     ctx.state.set(KEYS.batch, kept.length ? batch : undefined)
@@ -125,23 +128,21 @@ export function flushBatch(ctx: SourceContext, config: SignalConfig, group: stri
   const since = (at: string | undefined) => at === undefined ? Number.POSITIVE_INFINITY : now.getTime() - Date.parse(at)
   const settled = (at: string | undefined) => since(at) >= config.batchSettleSeconds * 1000
   let posted = 0
-  const post = (kind: 'start' | 'summary', parts: string[], text: string) => {
-    ctx.notify({ id: `signal:batch:${batch.id}:${kind}:${digest(parts)}`, channel, text, kind: 'notice' })
+  const post = (kind: 'start' | 'summary', listed: BatchTicket[], text: string) => {
+    ctx.notify({ id: `signal:batch:${batch.id}:${kind}:${digest(text, kind === 'summary' ? listed : [])}`, channel, text, kind: 'notice' })
     posted++
   }
-  const endParts = (listed: BatchTicket[], running: BatchTicket[]) =>
-    [...listed.flatMap(t => t.ended ? [`${t.id}:${t.ended.outcome}:${t.ended.at}`] : []), ...running.map(t => `running:${t.id}`)]
 
   const fresh = batch.tickets.filter(t => t.started && !t.announced && !t.ended)
   if (fresh.length && settled(batch.lastStart)) {
-    post('start', fresh.map(t => t.id), startText(batch, fresh))
+    post('start', fresh, startText(batch, fresh))
     for (const t of fresh) t.announced = true
     ctx.state.set(KEYS.batch, batch)
   }
 
   const running = batch.tickets.filter(t => !t.ended)
   if (!running.length && settled(batch.lastEnd)) {
-    post('summary', endParts(batch.tickets, running), summaryText(batch, batch.tickets, running))
+    post('summary', batch.tickets, summaryText(batch, batch.tickets, running))
     for (const t of batch.tickets) {
       const record = ctx.state.get<NotifiedRecord>(KEYS.notified(t.id)) ?? { keys: [] }
       ctx.state.set<NotifiedRecord>(KEYS.notified(t.id), { ...record, ...t.ended ? { ended: t.ended.at } : {} })
@@ -153,7 +154,7 @@ export function flushBatch(ctx: SourceContext, config: SignalConfig, group: stri
   const unreported = batch.tickets.filter(t => t.ended && !t.reported)
   const oldest = unreported.map(t => t.ended?.seen ?? '').sort()[0]
   if (running.length && unreported.length && since(oldest) >= config.batchMaxHours * 3600_000) {
-    post('summary', endParts(unreported, running), summaryText(batch, unreported, running))
+    post('summary', unreported, summaryText(batch, unreported, running))
     for (const t of unreported) t.reported = true
     ctx.state.set(KEYS.batch, batch)
   }

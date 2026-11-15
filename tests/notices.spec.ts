@@ -71,10 +71,10 @@ const linear = (id: string, identifier: string, meta: Record<string, unknown> = 
 const endOf = (outcome: NonNullable<Ticket['ended']>['outcome'], seconds: number, by: 'executor' | 'human' = 'executor') => ({ at: iso(seconds), by, outcome })
 const batchChannel = { source: 'signal', thread: `signal:${internalA}:batch`, address: { group: internalA } }
 const H = 3600
-const digest = (parts: string[]) => createHash('sha256').update([...parts].sort().join('\n')).digest('hex').slice(0, 12)
-const startId = (batch: string, ...tickets: string[]) => `signal:batch:${batch}:start:${digest(tickets)}`
-const summaryId = (batch: string, ended: [string, string, string][], running: string[] = []) =>
-  `signal:batch:${batch}:summary:${digest([...ended.map(([id, outcome, when]) => `${id}:${outcome}:${when}`), ...running.map(id => `running:${id}`)])}`
+const digest = (text: string, ends: string[]) => createHash('sha256').update([text, ...[...ends].sort()].join('\n')).digest('hex').slice(0, 12)
+const startId = (batch: string, text: string) => `signal:batch:${batch}:start:${digest(text, [])}`
+const summaryId = (batch: string, text: string, ...ends: [string, string][]) => `signal:batch:${batch}:summary:${digest(text, ends.map(([id, when]) => `${id}:${when}`))}`
+const START_12 = 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"'
 
 describe('transitionOf', () => {
   it('maps stages to notice keys', () => {
@@ -235,7 +235,7 @@ describe('batch notices', () => {
     s.round(at(179))
     expect(s.sent).toEqual([])
     s.round(at(180))
-    expect(s.sent).toEqual([{ id: startId(iso(5), 'T1', 'T2'), channel: batchChannel,
+    expect(s.sent).toEqual([{ id: startId(iso(5), START_12), channel: batchChannel,
       text: 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"', kind: 'notice' }])
     s.round(at(400))
     expect(s.sent).toHaveLength(1)
@@ -250,8 +250,8 @@ describe('batch notices', () => {
     s.round(at(300))
     s.round(at(420))
     expect(s.sent.map(m => [m.id, m.text])).toEqual([
-      [startId(iso(5), 'T1', 'T2'), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"'],
-      [startId(iso(5), 'T3'), 'Started: 1 ticket\nLinear ENG-3 "Fix header"'],
+      [startId(iso(5), START_12), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"'],
+      [startId(iso(5), 'Started: 1 ticket\nLinear ENG-3 "Fix header"'), 'Started: 1 ticket\nLinear ENG-3 "Fix header"'],
     ])
   })
 
@@ -281,7 +281,7 @@ describe('batch notices', () => {
     s.round(at(519))
     expect(s.sent).toHaveLength(1)
     s.round(at(520))
-    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), [['T1', 'merged', iso(300)], ['T2', 'completed', iso(400)]]), channel: batchChannel,
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', ['T1', iso(300)], ['T2', iso(400)]), channel: batchChannel,
       text: 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', kind: 'notice' })
     expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
     s.round(at(900))
@@ -357,7 +357,7 @@ describe('batch notices', () => {
     s.round(at(80))
     expect(s.sent.at(-1)?.id).toBe(`signal:notice:T1:failed:${iso(80)}`)
     s.round(at(180))
-    expect(s.sent.at(-1)?.id).toBe(startId(iso(5), 'T1', 'T2'))
+    expect(s.sent.at(-1)?.id).toBe(startId(iso(5), START_12))
   })
 
   it('sends a partial summary after batchMaxHours while tickets still run, and the batch goes on', () => {
@@ -369,14 +369,14 @@ describe('batch notices', () => {
     s.round(at(200 + 4 * H - 1))
     expect(s.sent).toHaveLength(1)
     s.round(at(200 + 4 * H))
-    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), [['T1', 'completed', iso(200)]], ['T2']), channel: batchChannel,
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done', ['T1', iso(200)]), channel: batchChannel,
       text: '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
     s.round(at(200 + 9 * H))
     expect(s.sent).toHaveLength(2)
     s.put(footer({ ended: endOf('completed', 10 * H), updatedAt: iso(10 * H) }), ended, eng2)
     s.round(at(10 * H))
     s.round(at(10 * H + 120))
-    expect(s.sent.at(-1)?.id).toBe(summaryId(iso(5), [['T1', 'completed', iso(200)], ['T2', 'completed', iso(10 * H)]]))
+    expect(s.sent.at(-1)?.id).toBe(summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done', ['T1', iso(200)], ['T2', iso(10 * H)]))
     expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done')
   })
 
@@ -413,8 +413,8 @@ describe('batch notices', () => {
     s.put(footer({ ended: endOf('completed', 201), updatedAt: iso(201) }), ended, eng2)
     s.round(at(201))
     crashed(at(321))
-    const start = startId(iso(5), 'T1', 'T2')
-    const summary = summaryId(iso(5), [['T1', 'completed', iso(200)], ['T2', 'completed', iso(201)]])
+    const start = startId(iso(5), START_12)
+    const summary = summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done', ['T1', iso(200)], ['T2', iso(201)])
     expect(s.sent.map(m => m.id)).toEqual([start, start, summary, summary])
     expect(s.sent[0]?.text).toBe(s.sent[1]?.text)
     expect(s.sent[2]?.text).toBe(s.sent[3]?.text)
@@ -433,7 +433,7 @@ describe('batch notices', () => {
     s.put(ticket('T3', { title: 'Fix header', updatedAt: iso(170) }), working, linear('trigger-T3', 'ENG-3'))
     s.round(at(180))
     s.round(at(300))
-    expect(s.sent.map(m => m.id)).toEqual([startId(iso(5), 'T1', 'T2'), startId(iso(5), 'T1', 'T2', 'T3')])
+    expect(s.sent.map(m => m.id)).toEqual([startId(iso(5), START_12), startId(iso(5), 'Started: 3 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"\nLinear ENG-3 "Fix header"')])
     expect([...outbox.values()].map(m => m.text)).toEqual(['Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"',
       'Started: 3 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"\nLinear ENG-3 "Fix header"'])
   })
@@ -448,7 +448,7 @@ describe('batch notices', () => {
     s.put(footer(), working, eng2)
     s.round(at(60))
     s.round(at(180))
-    expect(s.sent.map(m => [m.id, m.text])).toEqual([[startId(iso(5), 'T1', 'T2'), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"']])
+    expect(s.sent.map(m => [m.id, m.text])).toEqual([[startId(iso(5), START_12), 'Started: 2 tickets\nLinear ENG-1 "Fix login"\nLinear ENG-2 "Fix footer"']])
   })
 
   it('reports the final outcome once when a ticket resumes and ends again within the open batch', () => {
@@ -467,7 +467,7 @@ describe('batch notices', () => {
     s.put(login({ ended: endOf('merged', 700), follows: [{ thread: 'github:12', own: true }], updatedAt: iso(700) }), ended, eng1)
     s.round(at(700))
     s.round(at(820))
-    expect(s.sent.slice(1).map(m => [m.id, m.text])).toEqual([[summaryId(iso(5), [['T1', 'merged', iso(700)], ['T2', 'completed', iso(260)]]),
+    expect(s.sent.slice(1).map(m => [m.id, m.text])).toEqual([[summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done', ['T1', iso(700)], ['T2', iso(260)]),
       'Finished: 2 tickets\nLinear ENG-1 "Fix login" is merged: https://github.com/o/r/pull/12\nLinear ENG-2 "Fix footer" is done']])
     s.round(at(2000))
     expect(s.sent).toHaveLength(2)
@@ -492,7 +492,7 @@ describe('batch notices', () => {
     s.put(login({ ended: endOf('completed', 6 * H), updatedAt: iso(6 * H) }), ended, eng1)
     s.round(at(6 * H))
     s.round(at(6 * H + 120))
-    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(210), [['T1', 'completed', iso(6 * H)]]), channel: batchChannel,
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(210), 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', ['T1', iso(6 * H)]), channel: batchChannel,
       text: 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
   })
 
@@ -504,9 +504,55 @@ describe('batch notices', () => {
     s.round(at(200))
     s.ctx.ticketStore.delete('T2')
     s.round(at(320))
-    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), [['T1', 'completed', iso(200)]]), channel: batchChannel,
+    expect(s.sent.at(-1)).toEqual({ id: summaryId(iso(5), 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', ['T1', iso(200)]), channel: batchChannel,
       text: 'Finished: 1 ticket\nLinear ENG-1 "Fix login" is done', kind: 'notice' })
     expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+  })
+
+  it('keeps an ended ticket that vanishes before its summary, and still reports it', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.put(footer({ ended: endOf('merged', 201), updatedAt: iso(201) }), ended, eng2)
+    s.round(at(201))
+    s.ctx.ticketStore.delete('T1')
+    s.ctx.ticketStore.delete('T2')
+    s.round(at(321))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is merged')
+    expect(s.ctx.state.get(KEYS.batch)).toBeUndefined()
+  })
+
+  it('reports a replaced end in the next partial summary, even when the text is the same', () => {
+    const s = setup()
+    startTwo(s)
+    s.round(at(180))
+    s.put(login({ ended: endOf('completed', 200), updatedAt: iso(200) }), ended, eng1)
+    s.round(at(200))
+    s.round(at(200 + 4 * H))
+    expect(s.sent).toHaveLength(2)
+    s.put(login({ ended: endOf('completed', 5 * H), updatedAt: iso(5 * H) }), ended, eng1)
+    s.round(at(5 * H))
+    s.round(at(9 * H))
+    const text = '1 of 2 done, still running: Linear ENG-2 "Fix footer"\nLinear ENG-1 "Fix login" is done'
+    expect(s.sent.slice(1).map(m => [m.id, m.text])).toEqual([
+      [summaryId(iso(5), text, ['T1', iso(200)]), text],
+      [summaryId(iso(5), text, ['T1', iso(5 * H)]), text],
+    ])
+  })
+
+  it('gives different text a different id and the same text the same id', () => {
+    const s = setup()
+    started(s)
+    const sub = (id: string, identifier: string) => linear(`trigger-${id}`, identifier, { issue: `i-${identifier}`, parent: 'i-ENG-10' }, 'Parent: ENG-10 https://linear.app/x\n\nx')
+    s.put(ticket('T1', { title: 'One' }), working, sub('T1', 'ENG-11'))
+    s.round(at(5))
+    s.round(at(125))
+    s.put(ticket('T0', { title: 'Epic', updatedAt: iso(130) }), working, linear('trigger-T0', 'ENG-10', { issue: 'i-ENG-10' }))
+    s.round(at(130))
+    s.round(at(250))
+    expect(s.sent.map(m => m.text)).toEqual(['Started: 1 ticket\nEpic ENG-10:\n  Linear ENG-11 "One"', 'Started: 1 ticket\nEpic ENG-10 "Epic":'])
+    expect(s.sent.map(m => m.id)).toEqual(s.sent.map(m => startId(iso(5), m.text)))
   })
 
   it('stores one batch record', () => {
