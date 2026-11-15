@@ -1,7 +1,9 @@
+import { type Batch, flushBatch, loadBatch, observe } from './batch.ts'
 import { HEALTH, SOURCE, groupInternalId, type SignalConfig } from './config.ts'
 import { ticketThreadId } from './intake.ts'
+import { originLabel, subject } from './labels.ts'
 import { KEYS, type NotifiedRecord } from './state.ts'
-import type { ChannelRef, SourceContext, Ticket, TicketChange, TicketCursor, Trigger } from './types.ts'
+import type { ChannelRef, SourceContext, Ticket, TicketChange, TicketCursor } from './types.ts'
 
 export const NOTICE_INTERVAL_MS = 5000
 export const HOST_HEALTH_ENTRIES: readonly string[] = ['reply', 'relay', 'assessment', 'notice', 'runtime', 'evals', 'models', 'worker', 'launch', 'delivery', 'archive', HEALTH]
@@ -10,16 +12,8 @@ const PAGE = 100
 const KEPT_KEYS = 20
 
 export interface NoticeCounts { posted: number }
-export type NoticeKind = 'question' | 'blocked' | 'failed' | 'ended'
+export type NoticeKind = 'question' | 'blocked' | 'failed'
 type HealthRecord = { state: 'error'; since: string; notified: boolean } | { state: 'ok' }
-
-const ENDED_WORDS: Record<NonNullable<Ticket['ended']>['outcome'], string> = {
-  completed: 'is done',
-  merged: 'is merged',
-  closed: 'was closed without merging',
-  dropped: 'was dropped: nothing to do',
-  stopped: 'was stopped by a person',
-}
 
 function latestReport(ticket: Ticket) {
   let latest: { summary: string; at: string } | undefined
@@ -34,60 +28,47 @@ export function transitionOf(change: TicketChange): { key: string; kind: NoticeK
     const report = latestReport(ticket)
     return report ? { key: `${stage.action}:${report.at}`, kind: stage.action } : undefined
   }
-  if (stage.stage === 'ended' && ticket.ended) return { key: `ended:${ticket.ended.at}`, kind: 'ended' }
   return undefined
 }
 
-export function originLabel(trigger: Trigger | undefined): string {
-  if (!trigger) return 'Ticket'
-  switch (trigger.source) {
-    case 'linear': return typeof trigger.meta.identifier === 'string' ? `Linear ${trigger.meta.identifier}` : 'Linear'
-    case 'github': return trigger.url ? `GitHub ${trigger.url}` : 'GitHub'
-    case 'signal': return 'Signal request'
-    case 'feishu': return 'Feishu'
-    default: return trigger.source
-  }
-}
-
-function quotedTitle(title: string, origin: string): string {
-  const identifier = origin.startsWith('Linear ') ? origin.slice('Linear '.length) : undefined
-  return identifier && title.startsWith(`${identifier}: `) ? title.slice(identifier.length + 2) : title
-}
-
-export function noticeText(kind: NoticeKind, ticket: Ticket, origin: string, pull?: string): string {
-  const subject = `${origin} "${quotedTitle(ticket.title, origin)}"`
+export function noticeText(kind: NoticeKind, ticket: Ticket, origin: string): string {
+  const about = subject(ticket.title, origin)
   const answer = '\n\nQuote this message to answer.'
   switch (kind) {
-    case 'question': return `Question on ${subject}:\n${ticket.attention?.question ?? ''}${answer}`
-    case 'blocked': return `${subject} is blocked:\n${latestReport(ticket)?.summary ?? ''}${answer}`
-    case 'failed': return `${subject} failed:\n${latestReport(ticket)?.summary ?? ''}${answer}`
-    case 'ended': return `${subject} ${ticket.ended ? ENDED_WORDS[ticket.ended.outcome] : 'ended'}${pull ? `: ${pull}` : ''}.\n\nQuote this message to follow up.`
+    case 'question': return `Question on ${about}:\n${ticket.attention?.question ?? ''}${answer}`
+    case 'blocked': return `${about} is blocked:\n${latestReport(ticket)?.summary ?? ''}${answer}`
+    case 'failed': return `${about} failed:\n${latestReport(ticket)?.summary ?? ''}${answer}`
   }
 }
 
 export function noticeRound(ctx: SourceContext, config: SignalConfig, now: Date, counts: NoticeCounts): void {
   const group = groupInternalId(config.groupId)
   if (group === undefined) return
-  if (config.notifyTickets && ctx.tickets.changed) ticketRound(ctx, ctx.tickets.changed, group, now, counts)
+  if (config.notifyTickets && ctx.tickets.changed && ticketRound(ctx, ctx.tickets.changed, group, now, counts)) counts.posted += flushBatch(ctx, config, group, now)
   if (config.notifyHealth && ctx.health) healthRound(ctx, ctx.health(), group, config.healthGraceSeconds, now, counts)
 }
 
 type Changed = NonNullable<SourceContext['tickets']['changed']>
 
-function ticketRound(ctx: SourceContext, changed: Changed, group: string, now: Date, counts: NoticeCounts): void {
+function ticketRound(ctx: SourceContext, changed: Changed, group: string, now: Date, counts: NoticeCounts): boolean {
   const stored = ctx.state.get<TicketCursor>(KEYS.ticketCursor)
   if (!stored) {
     ctx.state.set<TicketCursor>(KEYS.ticketCursor, { at: now.toISOString(), id: '' })
-    return
+    return false
   }
+  let batch: Batch | undefined = loadBatch(ctx)
   // Re-read the whole last millisecond: a ticket with a smaller id may have been written there after the last read.
   let cursor: TicketCursor = { at: stored.at, id: '' }
   for (;;) {
     const page = changed(cursor, PAGE)
-    for (const change of page.items) announce(ctx, change, group, counts)
+    for (const change of page.items) {
+      announce(ctx, change, group, counts)
+      batch = observe(ctx, batch, change, now)
+    }
+    if (batch) ctx.state.set(KEYS.batch, batch)
     cursor = page.next
     ctx.state.set(KEYS.ticketCursor, cursor)
-    if (page.items.length < PAGE) return
+    if (page.items.length < PAGE) return true
   }
 }
 
@@ -95,47 +76,20 @@ function announce(ctx: SourceContext, change: TicketChange, group: string, count
   const transition = transitionOf(change)
   if (!transition) return
   const { ticket } = change
-  const trigger = ctx.triggers.get(ticket.origin.triggerId)
-  const fromSignal = trigger?.source === SOURCE
-  if (fromSignal && transition.kind === 'ended' && hostPostsEnd(ticket)) return
   const record = ctx.state.get<NotifiedRecord>(KEYS.notified(ticket.id)) ?? { keys: [] }
   if (record.keys.includes(transition.key)) return
-  const channel: ChannelRef = fromSignal && trigger.channel
+  const trigger = ctx.triggers.get(ticket.origin.triggerId)
+  const channel: ChannelRef = trigger?.source === SOURCE && trigger.channel
     ? trigger.channel
     : { source: SOURCE, thread: `${SOURCE}:${ticketThreadId(group, ticket.id)}`, address: { group } }
-  const text = noticeText(transition.kind, ticket, originLabel(trigger), transition.kind === 'ended' ? pullOf(ctx, ticket) : undefined)
-  ctx.notify({ id: `signal:notice:${ticket.id}:${transition.key}`, channel, text, kind: 'notice', ticketId: ticket.id })
+  ctx.notify({ id: `signal:notice:${ticket.id}:${transition.key}`, channel, text: noticeText(transition.kind, ticket, originLabel(trigger)), kind: 'notice', ticketId: ticket.id })
   counts.posted++
-  const ended = ticket.ended?.at ?? record.ended
-  ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { keys: [...record.keys, transition.key].slice(-KEPT_KEYS), ...ended ? { ended } : {} })
-}
-
-const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-
-function isPullThread(thread: string): boolean {
-  if (!thread.startsWith('github:')) return false
-  const id = thread.slice('github:'.length)
-  const at = id.indexOf('#')
-  const local = REPOSITORY.test(at > 0 ? id.slice(0, at) : '') ? id.slice(at + 1) : id
-  const number = Number(local)
-  return Number.isInteger(number) && number > 0
-}
-
-// Mirrors the host's pullEndNotices, which posts these ends on the request's channel itself.
-function hostPostsEnd(ticket: Ticket): boolean {
-  const outcome = ticket.ended?.outcome
-  return (outcome === 'merged' || outcome === 'closed') && (ticket.follows ?? []).some(follow => follow.closed && isPullThread(follow.thread))
+  ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { ...record, keys: [...record.keys, transition.key].slice(-KEPT_KEYS) })
 }
 
 function capped(detail: string): string {
   const points = [...detail]
   return points.length > DETAIL_MAX ? `${points.slice(0, DETAIL_MAX - 1).join('')}…` : detail
-}
-
-function pullOf(ctx: SourceContext, ticket: Ticket): string | undefined {
-  const own = ticket.follows?.find(follow => follow.own)
-  const url = own ? ctx.threads.get(own.thread)?.meta.url : undefined
-  return typeof url === 'string' ? url : undefined
 }
 
 function healthRound(ctx: SourceContext, entries: ReturnType<NonNullable<SourceContext['health']>>, group: string, graceSeconds: number, now: Date, counts: NoticeCounts): void {

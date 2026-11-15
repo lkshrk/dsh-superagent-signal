@@ -6,7 +6,7 @@ The owner writes in one Signal group. Each message from someone on the Policy's 
 
 The Source also:
 
-- posts a notice in the group when any ticket, from any Source, asks a question, is blocked, failed or ended;
+- posts one message when tickets start and one summary when they all finished, and a notice at once when a ticket asks a question, is blocked or failed;
 - posts a notice when another Source or sync entry stays in `error`, and again when it recovers;
 - lists Signal attachments in the Trigger text and lets an assessment read the images among them.
 
@@ -75,10 +75,12 @@ managed:
 | `groupId` | string | `""` | The group: its internal id (base64 of 32 bytes) or `group.<base64>`. Stored as given, compared as the internal id. |
 | `pollWaitSeconds` | integer, 0–60 | `30` | The hub's long-poll `wait`. Advanced. |
 | `pollLimit` | integer, 1–500 | `100` | Messages per pull. Advanced. |
-| `notifyTickets` | boolean | `true` | Notices when a ticket asks, is blocked, failed or ended. Advanced. |
+| `notifyTickets` | boolean | `true` | Start, stuck and summary messages about tickets. Advanced. |
 | `notifyHealth` | boolean | `true` | Notices when a dependency fails or recovers. Advanced. |
 | `healthGraceSeconds` | integer, 0–3600 | `60` | How long an entry must stay `error` before its notice. Advanced. |
 | `attachmentMaxBytes` | integer, 0–26214400 | `10485760` | Larger inbound attachments are listed, not fetched. Advanced. |
+| `batchSettleSeconds` | integer, 0–3600 | `120` | How long no ticket may start, or end, before the start message, or the summary. Advanced. |
+| `batchMaxHours` | integer, 1–48 | `4` | How long an ended ticket waits for its summary while others still run. Advanced. |
 
 [Configuration](docs/configuration.md) explains each key in full.
 
@@ -108,21 +110,42 @@ Attachments are listed in the Trigger text, one line each, such as `[attachment 
 
 ## Notices
 
-With `notifyTickets`, the Source watches every ticket in dsh-superagent, whatever Source it started from, and posts once per change:
+With `notifyTickets`, the Source watches every ticket in dsh-superagent, whatever Source it started from. Signal is for special cases: tickets that start or finish together get one message, not one each.
 
-| Change | Notice |
-| --- | --- |
-| The ticket asks a question | `Question on <origin> "<title>":` and the question |
-| A worker reports it blocked | `<origin> "<title>" is blocked:` and the report |
-| A worker reports it failed | `<origin> "<title>" failed:` and the report |
-| The ticket ended | `<origin> "<title>" is done`, `is merged`, `was closed without merging`, `was dropped: nothing to do` or `was stopped by a person`, with the link of its own pull request when it has one |
+| Change | Message | When |
+| --- | --- | --- |
+| Tickets start: a worker is on them | `Started: <n> tickets` and one line `<origin> "<title>"` per ticket | Once no other ticket started for `batchSettleSeconds` |
+| The ticket asks a question | `Question on <origin> "<title>":` and the question | At once |
+| A worker reports it blocked | `<origin> "<title>" is blocked:` and the report | At once |
+| A worker reports it failed | `<origin> "<title>" failed:` and the report | At once |
+| Every ticket of the batch ended | `Finished: <n> tickets` and one line per ticket: `is done`, `is merged`, `was closed without merging`, `was dropped: nothing to do` or `was stopped by a person`, with the link of its own pull request when it has one | Once no other ticket ended for `batchSettleSeconds` |
+| Tickets ended while others still run | `<ended> of <all> done, still running: …` and a line per ticket ended since the last summary | When the oldest of those ended `batchMaxHours` ago |
 
 `<origin>` is `Signal request`, `Linear ENG-12`, `GitHub <url>`, `Feishu` or the Source's name. A Linear title that starts with its identifier (`ENG-12: Fix login`) is quoted without it.
 
-- A ticket that started in Signal gets its notices as replies to the request that started it. dsh-superagent itself already posts there when the ticket ends merged or closed after a pull request it followed closed; the Source leaves those ends to it and announces the rest.
-- A ticket from another Source gets its notices in the group without a quote. Quote one to answer: the answer goes to that ticket.
+```text
+Started: 3 tickets
+Epic ENG-10:
+  Linear ENG-11 "Add form"
+  Linear ENG-12 "Wire API"
+Linear ENG-20 "Fix footer"
+```
+
+```text
+Finished: 3 tickets
+Epic ENG-10 "Login revamp": 2 of 2 sub-issues merged
+  Linear ENG-11 "Add form" is merged: https://github.com/o/r/pull/11
+  Linear ENG-12 "Wire API" is merged: https://github.com/o/r/pull/12
+Linear ENG-20 "Fix footer" was closed without merging
+```
+
+- The sub-issues of a Linear epic are listed under it. The count covers the sub-issues in the batch, not every sub-issue in Linear. The epic's title shows when the epic is a ticket of the batch too.
+- A ticket that ends without a worker ever starting on it, such as one dropped at assessment, shows only in the summary.
+- Start and summary messages go to the group without a quote. Quoting one starts a new request.
+- A question, block or failure of a ticket that started in Signal is a reply to the request that started it. A ticket from another Source gets it in the group without a quote; quote it to answer, and the answer goes to that ticket.
+- No message announces a single ticket's end. A Signal request still gets dsh-superagent's own reply on it.
 - On its first start the Source announces nothing from before; it starts watching from then on.
-- After a long dsh outage the chat may get a burst of notices for what happened meanwhile.
+- After a long dsh outage the next start or summary covers what happened meanwhile.
 
 With `notifyHealth`, the Source watches the health entries of the other Sources and sync jobs (not dsh-superagent's own effects, and not its own entry). An entry that stays `error` for `healthGraceSeconds` gets `dsh: <entry> is failing: <detail>` (at most 300 characters); when it is `ready` again, `dsh: <entry> works again.` Health notices start no ticket; quoting one starts a new request.
 

@@ -11,6 +11,7 @@ export const KEYS = {
   sent: (messageId: string) => `${PREFIX.sent}${messageId}`,
   notified: (ticketId: string) => `${PREFIX.notified}${ticketId}`,
   ticketCursor: 'signal-ticket-cursor',
+  batch: 'signal-batch',
   health: (entry: string) => `signal-health:${entry}`,
   pruned: 'signal-pruned',
 }

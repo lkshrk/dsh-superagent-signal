@@ -13,13 +13,14 @@ const config = (over: Partial<SignalConfig> = {}) => SignalConfigSchema.parse(ov
 describe('config', () => {
   it('fills the defaults', () => {
     expect(SignalConfigSchema.parse({})).toEqual({ hubUrl: '', tokenFile: '', groupId: '', pollWaitSeconds: 30, pollLimit: 100,
-      notifyTickets: true, notifyHealth: true, healthGraceSeconds: 60, attachmentMaxBytes: 10485760 })
+      notifyTickets: true, notifyHealth: true, healthGraceSeconds: 60, attachmentMaxBytes: 10485760, batchSettleSeconds: 120, batchMaxHours: 4 })
   })
 
   it('accepts valid values', () => {
     const parsed = SignalConfigSchema.parse({ hubUrl: 'http://signal-hub.tools.svc.cluster.local:8080', tokenFile: '/run/secrets/dsh', groupId: restForm(internal()),
-      pollWaitSeconds: 0, pollLimit: 500, healthGraceSeconds: 3600, attachmentMaxBytes: 26214400 })
+      pollWaitSeconds: 0, pollLimit: 500, healthGraceSeconds: 3600, attachmentMaxBytes: 26214400, batchSettleSeconds: 3600, batchMaxHours: 48 })
     expect(parsed.groupId).toBe(restForm(internal()))
+    expect(SignalConfigSchema.parse({ batchSettleSeconds: 0, batchMaxHours: 1 })).toMatchObject({ batchSettleSeconds: 0, batchMaxHours: 1 })
   })
 
   it.each([
@@ -34,6 +35,12 @@ describe('config', () => {
     ['healthGraceSeconds over', { healthGraceSeconds: 3601 }],
     ['attachmentMaxBytes over', { attachmentMaxBytes: 26214401 }],
     ['fractional pollLimit', { pollLimit: 1.5 }],
+    ['batchSettleSeconds negative', { batchSettleSeconds: -1 }],
+    ['batchSettleSeconds over', { batchSettleSeconds: 3601 }],
+    ['fractional batchSettleSeconds', { batchSettleSeconds: 1.5 }],
+    ['batchMaxHours zero', { batchMaxHours: 0 }],
+    ['batchMaxHours over', { batchMaxHours: 49 }],
+    ['fractional batchMaxHours', { batchMaxHours: 2.5 }],
     ['unknown key', { extra: true }],
   ])('refuses %s', (_, value) => {
     expect(SignalConfigSchema.safeParse(value).success).toBe(false)
