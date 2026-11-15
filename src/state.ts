@@ -12,6 +12,7 @@ export const KEYS = {
   notified: (ticketId: string) => `${PREFIX.notified}${ticketId}`,
   ticketCursor: 'signal-ticket-cursor',
   batch: 'signal-batch',
+  progressOff: 'signal-progress-off',
   health: (entry: string) => `signal-health:${entry}`,
   pruned: 'signal-pruned',
 }

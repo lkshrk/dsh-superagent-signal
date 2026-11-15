@@ -13,7 +13,7 @@ const config = (over: Partial<SignalConfig> = {}) => SignalConfigSchema.parse(ov
 describe('config', () => {
   it('fills the defaults', () => {
     expect(SignalConfigSchema.parse({})).toEqual({ hubUrl: '', tokenFile: '', groupId: '', pollWaitSeconds: 30, pollLimit: 100,
-      notifyTickets: true, notifyHealth: true, healthGraceSeconds: 60, attachmentMaxBytes: 10485760, batchSettleSeconds: 120, batchMaxHours: 4 })
+      notifyTickets: true, notifyProgress: false, notifyHealth: true, healthGraceSeconds: 60, attachmentMaxBytes: 10485760, batchSettleSeconds: 120, batchMaxHours: 4 })
   })
 
   it('accepts valid values', () => {

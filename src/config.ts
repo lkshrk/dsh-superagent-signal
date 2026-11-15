@@ -20,6 +20,7 @@ export const SignalConfigSchema = z.object({
   pollWaitSeconds: z.number().int().min(0).max(60).default(30),
   pollLimit: z.number().int().min(1).max(500).default(100),
   notifyTickets: z.boolean().default(true),
+  notifyProgress: z.boolean().default(false),
   notifyHealth: z.boolean().default(true),
   healthGraceSeconds: z.number().int().min(0).max(3600).default(60),
   attachmentMaxBytes: z.number().int().min(0).max(26214400).default(10485760),
