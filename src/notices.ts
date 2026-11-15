@@ -49,8 +49,13 @@ export function originLabel(trigger: Trigger | undefined): string {
   }
 }
 
+function quotedTitle(title: string, origin: string): string {
+  const identifier = origin.startsWith('Linear ') ? origin.slice('Linear '.length) : undefined
+  return identifier && title.startsWith(`${identifier}: `) ? title.slice(identifier.length + 2) : title
+}
+
 export function noticeText(kind: NoticeKind, ticket: Ticket, origin: string, pull?: string): string {
-  const subject = `${origin} "${ticket.title}"`
+  const subject = `${origin} "${quotedTitle(ticket.title, origin)}"`
   const answer = '\n\nQuote this message to answer.'
   switch (kind) {
     case 'question': return `Question on ${subject}:\n${ticket.attention?.question ?? ''}${answer}`

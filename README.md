@@ -117,7 +117,7 @@ With `notifyTickets`, the Source watches every ticket in dsh-superagent, whateve
 | A worker reports it failed | `<origin> "<title>" failed:` and the report |
 | The ticket ended | `<origin> "<title>" is done`, `is merged`, `was closed without merging`, `was dropped: nothing to do` or `was stopped by a person`, with the link of its own pull request when it has one |
 
-`<origin>` is `Signal request`, `Linear ENG-12`, `GitHub <url>`, `Feishu` or the Source's name.
+`<origin>` is `Signal request`, `Linear ENG-12`, `GitHub <url>`, `Feishu` or the Source's name. A Linear title that starts with its identifier (`ENG-12: Fix login`) is quoted without it.
 
 - A ticket that started in Signal gets its notices as replies to the request that started it. dsh-superagent itself already posts there when the ticket ends merged or closed after a pull request it followed closed; the Source leaves those ends to it and announces the rest.
 - A ticket from another Source gets its notices in the group without a quote. Quote one to answer: the answer goes to that ticket.
