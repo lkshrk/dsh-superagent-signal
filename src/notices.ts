@@ -67,7 +67,8 @@ function ticketRound(ctx: SourceContext, changed: Changed, config: SignalConfig,
     for (const change of page.items) {
       if (config.notifyTickets) announce(ctx, change, group, counts)
       // Changes up to offUntil were read with digests off and must not start a batch.
-      if (config.notifyProgress && !(offUntil !== undefined && change.ticket.updatedAt <= offUntil)) batch = observe(ctx, batch, change, now)
+      if (!config.notifyProgress) markEnded(ctx, change)
+      else if (!(offUntil !== undefined && change.ticket.updatedAt <= offUntil)) batch = observe(ctx, batch, change, now)
     }
     if (batch) ctx.state.set(KEYS.batch, batch)
     cursor = page.next
@@ -78,6 +79,13 @@ function ticketRound(ctx: SourceContext, changed: Changed, config: SignalConfig,
       return true
     }
   }
+}
+
+// Without digests no summary records the end, which prune needs to drop the record.
+function markEnded(ctx: SourceContext, { ticket, stage }: TicketChange): void {
+  if (stage.stage !== 'ended' || !ticket.ended) return
+  const record = ctx.state.get<NotifiedRecord>(KEYS.notified(ticket.id))
+  if (record && record.ended !== ticket.ended.at) ctx.state.set<NotifiedRecord>(KEYS.notified(ticket.id), { ...record, ended: ticket.ended.at })
 }
 
 function announce(ctx: SourceContext, change: TicketChange, group: string, counts: NoticeCounts): void {

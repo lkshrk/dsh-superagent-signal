@@ -687,6 +687,21 @@ describe('health notices', () => {
 })
 
 describe('switches and old hosts', () => {
+  it('marks a notified ticket ended with digests off, so prune drops its record after the horizon', () => {
+    const s = setup()
+    s.round(T0, quiet)
+    s.put(ticket('T1', { assignments: [report('No access', iso(5))], updatedAt: iso(5) }), blocked)
+    s.put(ticket('T2', { updatedAt: iso(6) }), working)
+    s.round(at(6), quiet)
+    s.put(ticket('T1', { ended: endOf('stopped', 100), updatedAt: iso(100) }), ended)
+    s.put(ticket('T2', { ended: endOf('completed', 101), updatedAt: iso(101) }), ended)
+    s.round(at(101), quiet)
+    expect(s.ctx.state.get<NotifiedRecord>(KEYS.notified('T1'))).toEqual({ keys: [`blocked:${iso(5)}`], ended: iso(100) })
+    expect(s.ctx.state.get(KEYS.notified('T2'))).toBeUndefined()
+    prune(s.ctx, at(100 + 15 * 24 * H))
+    expect(s.ctx.state.get(KEYS.notified('T1'))).toBeUndefined()
+  })
+
   it('posts nothing with every switch off, but keeps the ticket cursor moving', () => {
     const s = setup()
     const off = SignalConfigSchema.parse({ ...quiet, notifyTickets: false, notifyHealth: false })
