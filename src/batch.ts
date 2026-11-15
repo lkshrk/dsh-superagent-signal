@@ -100,9 +100,10 @@ export function startText(batch: Batch, fresh: BatchTicket[]): string {
 }
 
 export function summaryText(batch: Batch, listed: BatchTicket[], running: BatchTicket[]): string {
+  const earlier = batch.tickets.length - running.length - listed.length
   const head = running.length
     ? `${batch.tickets.length - running.length} of ${batch.tickets.length} done, still running: ${running.map(named).join(', ')}`
-    : `Finished: ${plural(batch.tickets.length)}`
+    : `Finished: ${plural(batch.tickets.length)}${earlier ? ` (${earlier} reported earlier)` : ''}`
   const header = (parent: string, own?: BatchTicket) => own?.ended
     ? `${epicName(batch, parent)} ${outcomeOf(own)}, ${epicCount(batch, parent)}`
     : `${epicName(batch, parent)}: ${epicCount(batch, parent)}`
@@ -134,7 +135,8 @@ export function flushBatch(ctx: SourceContext, config: SignalConfig, group: stri
   }
 
   const fresh = batch.tickets.filter(t => t.started && !t.announced && !t.ended)
-  if (fresh.length && settled(batch.lastStart)) {
+  const firstPending = fresh.map(t => t.started ?? '').sort()[0]
+  if (fresh.length && (settled(batch.lastStart) || since(firstPending) >= config.batchSettleSeconds * 5000)) {
     post('start', fresh, startText(batch, fresh))
     for (const t of fresh) t.announced = true
     ctx.state.set(KEYS.batch, batch)
@@ -142,7 +144,8 @@ export function flushBatch(ctx: SourceContext, config: SignalConfig, group: stri
 
   const running = batch.tickets.filter(t => !t.ended)
   if (!running.length && settled(batch.lastEnd)) {
-    post('summary', batch.tickets, summaryText(batch, batch.tickets, running))
+    const unreported = batch.tickets.filter(t => !t.reported)
+    post('summary', unreported, summaryText(batch, unreported, running))
     for (const t of batch.tickets) {
       const record = ctx.state.get<NotifiedRecord>(KEYS.notified(t.id)) ?? { keys: [] }
       ctx.state.set<NotifiedRecord>(KEYS.notified(t.id), { ...record, ...t.ended ? { ended: t.ended.at } : {} })

@@ -114,11 +114,11 @@ With `notifyTickets`, the Source watches every ticket in dsh-superagent, whateve
 
 | Change | Message | When |
 | --- | --- | --- |
-| Tickets start: a worker is on them | `Started: <n> tickets` and one line `<origin> "<title>"` per ticket | Once no other ticket started for `batchSettleSeconds` |
+| Tickets start: a worker is on them | `Started: <n> tickets` and one line `<origin> "<title>"` per ticket | Once no other ticket started for `batchSettleSeconds`, or at the latest five times that after the first ticket it lists started |
 | The ticket asks a question | `Question on <origin> "<title>":` and the question | At once |
 | A worker reports it blocked | `<origin> "<title>" is blocked:` and the report | At once |
 | A worker reports it failed | `<origin> "<title>" failed:` and the report | At once |
-| Every ticket of the batch ended | `Finished: <n> tickets` and one line per ticket: `is done`, `is merged`, `was closed without merging`, `was dropped: nothing to do` or `was stopped by a person`, with the link of its own pull request when it has one | Once no other ticket ended for `batchSettleSeconds` |
+| Every ticket of the batch ended | `Finished: <n> tickets`, with `(<k> reported earlier)` after a partial summary, and one line per ticket not reported yet: `is done`, `is merged`, `was closed without merging`, `was dropped: nothing to do` or `was stopped by a person`, with the link of its own pull request when it has one | Once no other ticket ended for `batchSettleSeconds` |
 | Tickets ended while others still run | `<ended> of <all> done, still running: …` and a line per ticket ended since the last summary | When the oldest of those ended `batchMaxHours` ago |
 
 `<origin>` is `Signal request`, `Linear ENG-12`, `GitHub <url>`, `Feishu` or the Source's name. A Linear title that starts with its identifier (`ENG-12: Fix login`) is quoted without it.

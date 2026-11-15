@@ -48,7 +48,7 @@ The one group the Source serves. Stored as given and compared as the internal id
 | `notifyHealth` | boolean | `true` | Notices when another Source or sync entry fails or recovers. |
 | `healthGraceSeconds` | integer, 0–3600 | `60` | How long an entry must stay `error` before its failure notice. An error that clears sooner is never announced. |
 | `attachmentMaxBytes` | integer, 0–26214400 | `10485760` | Inbound attachments larger than this are listed as `(too large to read)` and never fetched. Image reading also respects dsh's own image limits. |
-| `batchSettleSeconds` | integer, 0–3600 | `120` | The start message waits until no other ticket started for this long; the summary waits until every ticket of the batch ended and none ended for this long. `0` posts on the next notice round. |
+| `batchSettleSeconds` | integer, 0–3600 | `120` | The start message waits until no other ticket started for this long, but at most five times this long after its first ticket started; the summary waits until every ticket of the batch ended and none ended for this long. `0` posts on the next notice round. |
 | `batchMaxHours` | integer, 1–48 | `4` | While tickets still run, an ended ticket waits at most this long for its summary: a partial summary lists the ended ones and those still running, and the batch goes on. |
 
 While `hubUrl`, `tokenFile` or `groupId` is empty, or `groupId` is not a valid group id, the Source is `paused` with `Set the hub URL, token file and group id`, and takes nothing in.

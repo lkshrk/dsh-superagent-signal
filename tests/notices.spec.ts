@@ -376,8 +376,8 @@ describe('batch notices', () => {
     s.put(footer({ ended: endOf('completed', 10 * H), updatedAt: iso(10 * H) }), ended, eng2)
     s.round(at(10 * H))
     s.round(at(10 * H + 120))
-    expect(s.sent.at(-1)?.id).toBe(summaryId(iso(5), 'Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done', ['T1', iso(200)], ['T2', iso(10 * H)]))
-    expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets\nLinear ENG-1 "Fix login" is done\nLinear ENG-2 "Fix footer" is done')
+    expect(s.sent.at(-1)?.id).toBe(summaryId(iso(5), 'Finished: 2 tickets (1 reported earlier)\nLinear ENG-2 "Fix footer" is done', ['T2', iso(10 * H)]))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 2 tickets (1 reported earlier)\nLinear ENG-2 "Fix footer" is done')
   })
 
   it('posts no ended notice for a Signal request but lists it in the start and summary messages', () => {
@@ -553,6 +553,38 @@ describe('batch notices', () => {
     s.round(at(250))
     expect(s.sent.map(m => m.text)).toEqual(['Started: 1 ticket\nEpic ENG-10:\n  Linear ENG-11 "One"', 'Started: 1 ticket\nEpic ENG-10 "Epic":'])
     expect(s.sent.map(m => m.id)).toEqual(s.sent.map(m => startId(iso(5), m.text)))
+  })
+
+  it('lists only the tickets earlier partial summaries did not report in the final summary', () => {
+    const s = setup()
+    started(s)
+    for (const [id, n] of [['T1', 1], ['T2', 2], ['T3', 3]] as const) s.put(ticket(id, { title: `Task ${n}`, updatedAt: iso(n) }), working, linear(`trigger-${id}`, `ENG-${n}`))
+    s.round(at(5))
+    s.round(at(125))
+    s.put(ticket('T1', { title: 'Task 1', ended: endOf('completed', 200), updatedAt: iso(200) }), ended, linear('trigger-T1', 'ENG-1'))
+    s.put(ticket('T2', { title: 'Task 2', ended: endOf('merged', 201), updatedAt: iso(201) }), ended, linear('trigger-T2', 'ENG-2'))
+    s.round(at(201))
+    s.round(at(201 + 4 * H))
+    expect(s.sent.at(-1)?.text).toBe('2 of 3 done, still running: Linear ENG-3 "Task 3"\nLinear ENG-1 "Task 1" is done\nLinear ENG-2 "Task 2" is merged')
+    s.put(ticket('T3', { title: 'Task 3', ended: endOf('closed', 5 * H), updatedAt: iso(5 * H) }), ended, linear('trigger-T3', 'ENG-3'))
+    s.round(at(5 * H))
+    s.round(at(5 * H + 120))
+    expect(s.sent.at(-1)?.text).toBe('Finished: 3 tickets (2 reported earlier)\nLinear ENG-3 "Task 3" was closed without merging')
+  })
+
+  it('posts the start message at the latest five settle windows after the first pending start', () => {
+    const s = setup()
+    started(s)
+    for (let i = 0; i < 12; i++) {
+      s.put(ticket(`T${i}`, { title: `Task ${i}`, updatedAt: iso(5 + i * 60) }), working, linear(`trigger-T${i}`, `ENG-${i}`))
+      s.round(at(5 + i * 60))
+    }
+    expect(s.sent.map(m => m.text.split('\n')[0])).toEqual(['Started: 11 tickets'])
+    expect(s.sent[0]?.text.split('\n').at(-1)).toBe('Linear ENG-10 "Task 10"')
+    s.round(at(5 + 11 * 60 + 119))
+    expect(s.sent).toHaveLength(1)
+    s.round(at(5 + 11 * 60 + 120))
+    expect(s.sent.map(m => m.text)).toEqual([expect.stringMatching(/^Started: 11 tickets/), 'Started: 1 ticket\nLinear ENG-11 "Task 11"'])
   })
 
   it('stores one batch record', () => {
